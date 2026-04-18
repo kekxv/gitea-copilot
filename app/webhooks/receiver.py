@@ -1,0 +1,183 @@
+from fastapi import APIRouter, Request, Response, BackgroundTasks, HTTPException, Header
+from sqlalchemy.orm import Session
+from ..database import SessionLocal
+from ..models import ProcessedEvent, GiteaAccount, GiteaInstance
+from ..gitea import decode_user_context
+import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+def check_idempotency(db: Session, event_type: str, reference_id: str) -> bool:
+    """Check if event has already been processed."""
+    existing = db.query(ProcessedEvent).filter(
+        ProcessedEvent.event_type == event_type,
+        ProcessedEvent.reference_id == reference_id
+    ).first()
+    return existing is not None
+
+
+def record_processed_event(db: Session, event_type: str, reference_id: str):
+    """Record that an event has been processed."""
+    event = ProcessedEvent(event_type=event_type, reference_id=reference_id)
+    db.add(event)
+    db.commit()
+
+
+def is_self_trigger(payload: dict, bot_username: str) -> bool:
+    """Check if the webhook was triggered by the bot itself."""
+    sender = payload.get("sender", {})
+    sender_login = sender.get("login", "")
+    return sender_login == bot_username
+
+
+def get_context_from_header(authorization: str) -> tuple[int, int]:
+    """Extract instance and account IDs from Authorization header."""
+    if not authorization or not authorization.startswith("Basic "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    encoded = authorization.replace("Basic ", "")
+    return decode_user_context(encoded)
+
+
+@router.post("/gitea")
+async def receive_gitea_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_gitea_signature: str = Header(None, alias="X-Gitea-Signature"),
+    x_gitea_event: str = Header(None, alias="X-Gitea-Event"),
+    authorization: str = Header(None, alias="Authorization")
+):
+    """Receive and process Gitea webhook."""
+    logger.info("=== WEBHOOK RECEIVED ===")
+
+    body = await request.body()
+
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    event_type = x_gitea_event or "unknown"
+    action = payload.get("action", "unknown")
+    logger.info(f"Event: {event_type}, Action: {action}")
+
+    # Only process created/opened actions - skip edited/deleted/closed etc
+    allowed_actions = ["created", "opened"]
+    if action.lower() not in allowed_actions:
+        logger.debug(f"Skipping action: {action}, only processing created/opened")
+        return Response(status_code=200)
+
+    # Get context from Authorization header
+    try:
+        instance_id, account_id = get_context_from_header(authorization)
+        logger.debug(f"Context decoded: instance_id={instance_id}, account_id={account_id}")
+    except HTTPException:
+        raise
+
+    # Quick validation - return immediately if invalid
+    db = SessionLocal()
+    try:
+        account = db.query(GiteaAccount).filter(GiteaAccount.id == account_id).first()
+        if not account:
+            logger.warning(f"Account {account_id} not found")
+            return Response(status_code=200)
+
+        instance = db.query(GiteaInstance).filter(GiteaInstance.id == instance_id).first()
+        if not instance:
+            logger.warning(f"Instance {instance_id} not found")
+            return Response(status_code=200)
+
+        bot_username = account.gitea_username
+        logger.debug(f"Bot username: {bot_username}")
+    except Exception as e:
+        logger.error(f"Database query error: {e}")
+        return Response(status_code=200)
+    finally:
+        db.close()
+
+    # Determine reference_id for idempotency
+    reference_id = ""
+    if event_type == "issue_comment":
+        reference_id = str(payload.get("comment", {}).get("id", ""))
+    elif event_type == "issues":
+        reference_id = str(payload.get("issue", {}).get("id", ""))
+    elif event_type == "pull_request":
+        reference_id = str(payload.get("pull_request", {}).get("id", ""))
+
+    # Check idempotency
+    db = SessionLocal()
+    try:
+        if reference_id and check_idempotency(db, event_type, reference_id):
+            logger.info(f"Event already processed: {event_type}/{reference_id}")
+            return Response(status_code=200)
+
+        if reference_id:
+            record_processed_event(db, event_type, reference_id)
+            logger.debug(f"Event recorded: {event_type}/{reference_id}")
+    except Exception as e:
+        logger.error(f"Idempotency check error: {e}")
+    finally:
+        db.close()
+
+    # Check if bot is mentioned (quick check before scheduling background task)
+    content_to_check = ""
+    if event_type == "issue_comment":
+        content_to_check = payload.get("comment", {}).get("body", "")
+    elif event_type == "issues":
+        content_to_check = payload.get("issue", {}).get("body", "")
+    elif event_type == "pull_request":
+        content_to_check = payload.get("pull_request", {}).get("body", "")
+
+    logger.debug(f"Content to check: '{content_to_check[:100] if content_to_check else 'empty'}'")
+    logger.debug(f"Looking for @{bot_username}")
+
+    if f"@{bot_username}" not in (content_to_check or ""):
+        logger.info(f"No @mention found, skipping")
+        return Response(status_code=200)
+
+    logger.info(f"Bot mentioned, scheduling background processing")
+
+    # Schedule background task for AI processing
+    background_tasks.add_task(
+        process_webhook_async,
+        instance_id,
+        account_id,
+        event_type,
+        payload
+    )
+
+    # Return immediately
+    return Response(status_code=200)
+
+
+async def process_webhook_async(
+    instance_id: int,
+    account_id: int,
+    event_type: str,
+    payload: dict
+):
+    """Background task to process webhook and call AI."""
+    logger.info(f"=== BACKGROUND PROCESSING STARTED ===")
+
+    db = SessionLocal()
+    try:
+        instance = db.query(GiteaInstance).filter(GiteaInstance.id == instance_id).first()
+        account = db.query(GiteaAccount).filter(GiteaAccount.id == account_id).first()
+
+        if not instance or not account:
+            logger.error(f"Instance or account not found in background task")
+            return
+
+        from .processor import WebhookProcessor
+        processor = WebhookProcessor(instance, account)
+
+        await processor.process(event_type, payload, db)
+        logger.info(f"=== BACKGROUND PROCESSING COMPLETED ===")
+
+    except Exception as e:
+        logger.error(f"Background processing error: {e}", exc_info=True)
+    finally:
+        db.close()

@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}管理面板 - GiteaCopilot{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1>管理面板</h1>
+    <p>欢迎，管理员 <strong>{{ admin_username }}</strong></p>
+</div>
+
+<div class="grid grid-2">
+    <!-- 左侧：系统配置 -->
+    <div class="card">
+        <div class="card-header">
+            <h3>系统配置</h3>
+            <p class="text-muted">配置 AI 模型参数和 Copilot 文档限制</p>
+        </div>
+
+        <form action="/admin/config" method="post">
+            <div class="form-group">
+                <label for="llm_base_url">OpenAI Base URL</label>
+                <input type="url" id="llm_base_url" name="llm_base_url" value="{{ config.llm_base_url or 'https://api.openai.com/v1' }}">
+                <small class="form-hint">支持自定义 OpenAI 兼容 API 地址</small>
+            </div>
+
+            <div class="form-group">
+                <label for="llm_api_key">API Key</label>
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <input type="password" id="llm_api_key" name="llm_api_key" placeholder="输入新值以更新">
+                    {% if config.llm_api_key %}
+                    <span class="badge badge-success">已配置</span>
+                    {% else %}
+                    <span class="badge badge-default">未配置</span>
+                    {% endif %}
+                </div>
+                <small class="form-hint">如需修改请输入新值，留空则保持当前状态</small>
+            </div>
+
+            <div class="form-group">
+                <label for="llm_model">模型名称</label>
+                <input type="text" id="llm_model" name="llm_model" value="{{ config.llm_model or 'gpt-4o-mini' }}">
+            </div>
+
+            <div class="card-section">
+                <h4>Copilot 文档配置</h4>
+                <p class="text-muted">项目可在 <code>.gitea/copilot/</code> 目录存放 .md 文件作为 AI 上下文</p>
+
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label for="copilot_docs_limit">最大文件数</label>
+                        <input type="number" id="copilot_docs_limit" name="copilot_docs_limit" value="{{ config.copilot_docs_limit or 10 }}" min="1" max="50">
+                        <small class="form-hint">读取 .md 文件的最大数量</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="copilot_docs_size_limit">最大大小 (KB)</label>
+                        <input type="number" id="copilot_docs_size_limit" name="copilot_docs_size_limit" value="{{ config.copilot_docs_size_limit or 25 }}" min="1" max="100">
+                        <small class="form-hint">所有文件的总大小上限</small>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">保存配置</button>
+            {% if config.llm_api_key %}
+            <button type="submit" name="clear_api_key" value="1" class="btn btn-outline btn-sm" style="margin-left: 0.5rem;">清除 API Key</button>
+            {% endif %}
+        </form>
+    </div>
+
+    <!-- 右侧：账号安全 -->
+    <div class="card">
+        <div class="card-header">
+            <h3>账号安全</h3>
+        </div>
+
+        <div class="security-items">
+            <div class="security-item">
+                <div class="security-item-info">
+                    <strong>密码</strong>
+                    <span class="text-muted">上次修改：未知</span>
+                </div>
+                <a href="/admin/password" class="btn btn-outline btn-sm">修改密码</a>
+            </div>
+
+            <div class="security-item">
+                <div class="security-item-info">
+                    <strong>两步验证 (TOTP)</strong>
+                    {% if admin_totp_enabled %}
+                    <span class="badge badge-success">已启用</span>
+                    {% else %}
+                    <span class="badge badge-default">未启用</span>
+                    {% endif %}
+                </div>
+                <a href="/admin/totp" class="btn btn-outline btn-sm">
+                    {% if admin_totp_enabled %}管理{% else %}启用{% endif %}
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Gitea 实例配置 -->
+<div class="card mt-3">
+    <div class="card-header">
+        <h3>Gitea 实例配置</h3>
+        <p class="text-muted">添加 Gitea 实例并配置 OAuth</p>
+    </div>
+
+    <!-- 回调 URL -->
+    <div class="callback-example">
+        <h4>OAuth 回调地址</h4>
+        <p class="text-muted">在 Gitea 创建 OAuth 应用时，请填入以下回调地址：</p>
+        <div class="callback-url-display">
+            <code id="callback-url">{{ callback_url }}</code>
+            <button class="btn btn-sm btn-outline" onclick="copyCallbackUrl()">📋 复制</button>
+        </div>
+    </div>
+
+    <div class="alert alert-info mb-2">
+        <strong>配置流程：</strong>
+        <ol style="margin: 0.5rem 0 0 1.5rem;">
+            <li>在 Gitea 中创建 OAuth2 应用（设置 → 应用 → 管理 OAuth2 应用）</li>
+            <li>应用名称随意，重定向 URI 填入上方的回调地址</li>
+            <li>创建后获取 Client ID 和 Client Secret</li>
+            <li>在下方添加 Gitea 实例，填入 URL、Client ID、Secret</li>
+            <li>点击"授权账号"完成绑定</li>
+        </ol>
+    </div>
+
+    <form action="/admin/instances" method="post">
+        <div class="form-group">
+            <label for="url">Gitea URL</label>
+            <input type="url" id="url" name="url" required placeholder="https://gitea.example.com">
+            <small class="form-hint">Gitea 服务地址</small>
+        </div>
+
+        <div class="grid grid-2">
+            <div class="form-group">
+                <label for="client_id">OAuth Client ID</label>
+                <input type="text" id="client_id" name="client_id" required placeholder="从 Gitea OAuth 应用获取">
+            </div>
+
+            <div class="form-group">
+                <label for="client_secret">OAuth Client Secret</label>
+                <input type="password" id="client_secret" name="client_secret" required placeholder="从 Gitea OAuth 应用获取">
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">添加实例</button>
+    </form>
+
+    {% if instances %}
+    <div class="card-section">
+        <h4>已配置的实例</h4>
+        <div class="list">
+            {% for instance in instances %}
+            <div class="list-item">
+                <div class="list-item-info">
+                    <h4>{{ instance.url }}</h4>
+                    <p class="text-muted">Client ID: {{ instance.client_id }}</p>
+                    {% if instance.account_count > 0 %}
+                    <div class="account-info">
+                        {% for account in instance.accounts %}
+                        <span class="account-tag">@{{ account }}</span>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="account-info">
+                        <span class="account-tag empty">未授权</span>
+                    </div>
+                    {% endif %}
+                </div>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button class="btn btn-primary btn-sm" onclick="startOAuth({{ instance.id }})">授权账号</button>
+                    <button class="btn btn-outline btn-sm" onclick="deleteItem('/admin/instances/{{ instance.id }}', () => location.reload())">删除</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Gitea 账号 -->
+<div class="card mt-3">
+    <div class="card-header">
+        <h3>已绑定的账号</h3>
+        <p class="text-muted">用户级别 Webhook，可接收所有仓库的事件通知</p>
+    </div>
+
+    {% if accounts %}
+    <div class="accounts-list">
+        {% for account in accounts %}
+        <div class="account-block">
+            <div class="account-header">
+                <div class="account-info">
+                    <span class="account-tag">@{{ account.gitea_username }}</span>
+                    <span class="account-instance">{{ account.instance_url }}</span>
+                    {% if account.webhook_id %}
+                    <span class="webhook-status ok">Webhook 已配置</span>
+                    {% else %}
+                    <span class="webhook-status warn">Webhook 未配置</span>
+                    {% endif %}
+                </div>
+                <button class="btn btn-outline btn-sm" onclick="deleteItem('/admin/accounts/{{ account.id }}', () => location.reload())">解绑</button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="alert alert-info mt-2">
+        <strong>使用方法：</strong>
+        <p>在任意仓库的 Issue 或 Pull Request 中评论 <code>@账号名</code> 即可触发 AI 助手。</p>
+    </div>
+    {% else %}
+    <div class="oauth-notice">
+        <p>还没有绑定账号。请先添加 Gitea 实例，然后点击"授权账号"。</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- 统计信息 -->
+<div class="card mt-3">
+    <div class="card-header">
+        <h3>系统统计</h3>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-item">
+            <div class="stat-value">{{ stats.instances }}</div>
+            <div class="stat-label">Gitea 实例</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value">{{ stats.accounts }}</div>
+            <div class="stat-label">绑定账号</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value">{{ stats.events }}</div>
+            <div class="stat-label">已处理事件</div>
+        </div>
+    </div>
+</div>
+
+<script>
+function copyCallbackUrl() {
+    const url = document.getElementById('callback-url').textContent;
+    copyToClipboard(url);
+}
+</script>
+{% endblock %}

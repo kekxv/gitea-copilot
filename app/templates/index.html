@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}GiteaCopilot - Gitea AI 智能助手{% endblock %}
+
+{% block content %}
+<!-- Hero Section -->
+<section class="landing-hero">
+    <div class="hero-content">
+        <div class="hero-icon">
+            <svg viewBox="0 0 24 24" width="72" height="72">
+                <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+            </svg>
+        </div>
+        <h1>GiteaCopilot</h1>
+        <p>为 Gitea 提供 AI 智能助手，在 Issue 和 Pull Request 中 @账号名 即可召唤 AI</p>
+        <div class="hero-buttons">
+            {% if show_register %}
+            <a href="/admin/register" class="btn btn-primary btn-lg">开始使用</a>
+            {% else %}
+            <a href="/admin/login" class="btn btn-primary btn-lg">登录管理</a>
+            {% endif %}
+        </div>
+    </div>
+</section>
+
+<!-- Status Bar -->
+<section class="status-bar">
+    <div class="status-item">
+        <span class="status-dot {% if status.database %}ok{% else %}error{% endif %}"></span>
+        <span>数据库 {{ "正常" if status.database else "异常" }}</span>
+    </div>
+    <div class="status-divider"></div>
+    <div class="status-item">
+        <span class="status-dot {% if status.llm_configured %}ok{% else %}warn{% endif %}"></span>
+        <span>LLM {{ "已配置" if status.llm_configured else "待配置" }}</span>
+    </div>
+    <div class="status-divider"></div>
+    <div class="status-item">
+        <span class="status-num">{{ status.instances }}</span>
+        <span>Gitea 实例</span>
+    </div>
+    <div class="status-divider"></div>
+    <div class="status-item">
+        <span class="status-num">{{ status.accounts }}</span>
+        <span>绑定账号</span>
+    </div>
+</section>
+
+<!-- Quick Start Flow -->
+<section class="flow-section">
+    <h2>快速开始</h2>
+    <div class="flow-steps">
+        <div class="flow-step">
+            <div class="flow-badge">1</div>
+            <div class="flow-title">创建 OAuth 应用</div>
+            <div class="flow-desc">在 Gitea 设置中创建 OAuth2 应用</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+            <div class="flow-badge">2</div>
+            <div class="flow-title">添加实例</div>
+            <div class="flow-desc">填写实例 URL 和 Client 信息</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+            <div class="flow-badge">3</div>
+            <div class="flow-title">授权账号</div>
+            <div class="flow-desc">点击授权绑定 Gitea 账号</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step">
+            <div class="flow-badge">4</div>
+            <div class="flow-title">@触发 AI</div>
+            <div class="flow-desc">评论 <code>@您的账号名</code> 即可</div>
+        </div>
+    </div>
+</section>
+
+<!-- Features Section -->
+<section class="features-section">
+    <h2>功能介绍</h2>
+    <div class="features-grid">
+        <div class="feature-card">
+            <div class="feature-icon">🤖</div>
+            <h3>AI 智能回复</h3>
+            <p>在 Issue/PR 中评论 @您的账号名，AI 自动分析项目文档并生成回复</p>
+            <div class="feature-example">
+                <code>@您的账号名 这个问题怎么解决？</code>
+                <span class="example-arrow">→</span>
+                <span class="example-result">AI 分析并给出解决方案</span>
+            </div>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">🔍</div>
+            <h3>代码审查</h3>
+            <p>自动审查 Pull Request，提供代码改进建议</p>
+            <div class="feature-example">
+                <code>@您的账号名 review</code>
+                <span class="example-arrow">→</span>
+                <span class="example-result">生成代码审查报告</span>
+            </div>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">🏷️</div>
+            <h3>智能标签</h3>
+            <p>根据内容自动识别并添加合适的分类标签</p>
+            <div class="feature-example">
+                <code>@您的账号名 label bug feature</code>
+                <span class="example-arrow">→</span>
+                <span class="example-result">添加指定标签（静默）</span>
+            </div>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">📁</div>
+            <h3>项目定制文档</h3>
+            <p>在仓库创建 <code>.gitea/copilot/</code> 目录，存放 .md 文件作为 AI 专属上下文</p>
+            <div class="feature-example">
+                <code>.gitea/copilot/faq.md</code>
+                <span class="example-arrow">→</span>
+                <span class="example-result">AI 优先参考项目定制内容</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Copilot Docs Section -->
+<section class="flow-section">
+    <h2>项目定制 AI 配置</h2>
+    <p class="text-center text-muted" style="margin-bottom: 1.5rem;">
+        在仓库中创建 <code>.gitea/copilot/</code> 目录，存放 .md 文件作为 AI 的专属知识库
+    </p>
+    <div class="flow-steps">
+        <div class="flow-step" style="max-width: 300px;">
+            <div class="flow-badge" style="background: var(--success);">📁</div>
+            <div class="flow-title">创建目录</div>
+            <div class="flow-desc">
+                <code>.gitea/copilot/</code>
+            </div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step" style="max-width: 300px;">
+            <div class="flow-badge" style="background: var(--success);">📝</div>
+            <div class="flow-title">添加文档</div>
+            <div class="flow-desc">
+                <code>faq.md</code>, <code>guide.md</code>, <code>rules.md</code> 等
+            </div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step" style="max-width: 300px;">
+            <div class="flow-badge" style="background: var(--success);">🤖</div>
+            <div class="flow-title">AI 优先参考</div>
+            <div class="flow-desc">
+                用户提问时自动加载定制文档
+            </div>
+        </div>
+    </div>
+    <div class="card mt-2" style="max-width: 600px; margin: 1.5rem auto;">
+        <h4 style="margin: 0 0 0.5rem 0; color: var(--primary);">💡 使用场景</h4>
+        <ul style="margin: 0; padding-left: 1.5rem; color: var(--text-muted);">
+            <li><code>faq.md</code> - 常见问题解答，AI 自动引用</li>
+            <li><code>guide.md</code> - 项目特定流程说明</li>
+            <li><code>rules.md</code> - 代码规范、提交规范</li>
+            <li><code>api.md</code> - API 使用说明</li>
+        </ul>
+    </div>
+</section>
+{% endblock %}

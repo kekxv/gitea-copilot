@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}管理员注册 - GiteaCopilot{% endblock %}
+
+{% block content %}
+<div class="card card-hero">
+    <div class="card-header">
+        <h2>创建管理员账号</h2>
+        <p class="text-muted">首次使用，请创建管理员账号</p>
+    </div>
+
+    <form action="/admin/register" method="post">
+        <div class="form-group">
+            <label for="username">用户名</label>
+            <input type="text" id="username" name="username" required placeholder="至少3个字符" autofocus>
+        </div>
+
+        <div class="form-group">
+            <label for="password">密码</label>
+            <input type="password" id="password" name="password" required placeholder="至少6个字符">
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block">创建账号</button>
+    </form>
+
+    {% if error %}
+    <div class="alert alert-error mt-2">{{ error }}</div>
+    {% endif %}
+</div>
+{% endblock %}
