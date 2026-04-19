@@ -167,7 +167,10 @@ class ReviewSkill(BaseSkill):
             if not text: return ""
             sensitive_keywords = r'token|key|password|secret|credential|auth|bearer|sha|md5|salt|api_key|access_token|private_key|passwd|pwd'
             patterns = [
-                (rf'(?i)\b({sensitive_keywords})\b\s*[:=：]\s*["\']?[a-zA-Z0-9_\-\.]{10,}["\']?', r'\1: [REDACTED]'),
+                # Precise match: key: value or key=value
+                (rf'(?i)\b({sensitive_keywords})\b\s*[:=：]\s*["\']?[a-zA-Z0-9_\-\.]{{8,}}["\']?', r'\1: [REDACTED]'),
+                # Catch specific sk- tokens or other long random strings after identifiers
+                (r'(?i)\b(secret|token|key)\b\s*[:=：\s]+\s*["\']?([a-zA-Z0-9_\-\.]{15,})["\']?', r'\1: [REDACTED]'),
             ]
             for p, r in patterns: text = re.sub(p, r, text)
             if sender_login:

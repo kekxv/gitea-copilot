@@ -11,6 +11,8 @@ logging.basicConfig(
 )
 
 # Now import the rest
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from .database import engine, Base
@@ -20,20 +22,23 @@ from .tasks import start_scheduler
 
 logger = logging.getLogger(__name__)
 
-# Initialize database tables
-Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="GiteaCopilot")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan - startup and shutdown."""
+    # Startup
+    Base.metadata.create_all(bind=engine)
+    start_scheduler()
+    logger.info("Application started")
+    yield
+    # Shutdown (if needed)
+    logger.info("Application shutting down")
+
+
+app = FastAPI(title="GiteaCopilot", lifespan=lifespan)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Start background tasks on app startup."""
-    start_scheduler()
-    logger.info("Application started")
 
 
 # Include routers

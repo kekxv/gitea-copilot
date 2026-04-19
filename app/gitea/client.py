@@ -5,6 +5,8 @@ import httpx
 import json
 import logging
 import base64
+import hmac
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -457,10 +459,19 @@ def encode_user_context(instance_id: int, account_id: int) -> str:
 
 
 def decode_user_context(encoded: str) -> tuple[int, int]:
-    """Decode user context from Base64 Authorization header."""
-    decoded = base64.b64decode(encoded).decode()
-    instance_id, account_id = decoded.split(":")
-    return int(instance_id), int(account_id)
+    """Decode user context from Base64 Authorization header.
+    
+    Returns (instance_id, account_id) or (0, 0) if invalid.
+    """
+    try:
+        decoded = base64.b64decode(encoded).decode()
+        if ":" not in decoded:
+            return 0, 0
+        instance_id, account_id = decoded.split(":", 1)
+        return int(instance_id), int(account_id)
+    except Exception as e:
+        logger.warning(f"Failed to decode user context: {e}")
+        return 0, 0
 
 
 def verify_hmac_signature(
