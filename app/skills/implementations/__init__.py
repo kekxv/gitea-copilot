@@ -156,7 +156,7 @@ class AnalyzeSkill(BaseSkill):
 
 
 class ReviewSkill(BaseSkill):
-    """Skill for reviewing pull request code with tool calls."""
+    """Skill for reviewing pull request code with robust logic, security, and loop prevention."""
 
     async def execute(
         self,
@@ -165,24 +165,31 @@ class ReviewSkill(BaseSkill):
         comment: Optional[Dict],
         payload: Dict[Any, Any]
     ) -> str:
-        """Review PR code changes using grouped Review API with mandatory Commit ID."""
+        """Review PR code changes. Supports single-account self-triggering via mention scrubbing."""
         owner, repo = self.get_repo_info(payload)
         pr_number = self.get_issue_number(payload)
+        original_comment_body = comment.get("body", "") if comment else ""
+        
+        # Get bot username from account info (passed via payload or context)
+        # In this project, bot_username is available in payload sender context 
+        # but we use account settings. Here we'll just extract from payload logic.
+        repository = payload.get("repository", {})
+        sender_login = payload.get("sender", {}).get("login", "")
 
         if not payload.get("is_pull", False):
             return "这个命令只在 Pull Request 里有效哦 🙃"
 
         try:
-            # 1. Get PR Context including head SHA
+            # 1. Get Context
             pr = await self.gitea.get_pull_request(owner, repo, pr_number)
             head_sha = pr.get("head", {}).get("sha")
             pr_title = pr.get("title", "")
             diff = await self.gitea.get_pull_request_diff(owner, repo, pr_number)
             if not diff: return "获取代码变更失败。"
 
-            # 2. Build Line Whitelist
+            # 2. Build Whitelist
             file_changes = self._parse_diff(diff)
-            valid_lines = {} 
+            valid_lines = {}
             for file in file_changes:
                 path = file["path"]
                 valid_lines[path] = {"new": set(), "old": set()}
@@ -190,7 +197,7 @@ class ReviewSkill(BaseSkill):
                     if l.get("new_line") is not None: valid_lines[path]["new"].add(l["new_line"])
                     if l.get("old_line") is not None: valid_lines[path]["old"].add(l["old_line"])
 
-            # 3. Chunking for AI
+            # 3. Chunking
             chunks = []
             current_chunk = []
             current_chunk_lines = 0
@@ -200,9 +207,7 @@ class ReviewSkill(BaseSkill):
                 current_chunk.append(file); current_chunk_lines += len(file['lines'])
             if current_chunk: chunks.append(current_chunk)
 
-            logger.info(f"Starting review for PR #{pr_number} at {head_sha[:8]}")
-
-            # 4. Processing
+            # 4. Process Chunks
             from ..tools import REVIEW_TOOLS, get_review_system_prompt
             all_comments = []
             all_summaries = []
@@ -223,24 +228,22 @@ class ReviewSkill(BaseSkill):
                             try: raw_comments = json.loads(raw_comments)
                             except: pass
                         if isinstance(raw_comments, dict): raw_comments = [raw_comments]
+                        
                         for c in raw_comments:
                             path, body = c.get("path"), c.get("body")
                             if not path or not body: continue
-                            # Accept both old and new field names for robustness
                             nl = c.get("new_position") or c.get("new_line")
                             ol = c.get("old_position") or c.get("old_line")
-
                             nl = int(nl) if nl is not None else None
                             ol = int(ol) if ol is not None else None
-
-                            # Validate
+                            
                             is_valid = False
                             if path in valid_lines:
                                 if nl and nl in valid_lines[path]["new"]: is_valid = True
                                 elif ol and ol in valid_lines[path]["old"]: is_valid = True
                             
                             if is_valid:
-                                all_comments.append({"path": path, "new_line": nl, "old_line": ol, "body": body})
+                                all_comments.append({"path": path, "new_position": nl, "old_position": ol, "body": body})
                             else:
                                 all_summaries.append(f"**[{path}]**: {body}")
                         
@@ -248,54 +251,68 @@ class ReviewSkill(BaseSkill):
                         return {"success": True, "__break__": True}
                     return {"error": "Unknown tool"}
 
-                prompt = f"审查 PR #{pr_number} (第 {i+1}/{len(chunks)} 部分)\n标题: {pr_title}\n\n{diff_context}\n\n请分析并调用 submit_review。"
+                prompt = f"审查 PR #{pr_number} (第 {i+1}/{len(chunks)} 部分)\n标题: {pr_title}\n\n{diff_context}"
                 await self.llm.generate_with_tools(prompt, get_review_system_prompt(), REVIEW_TOOLS, on_tool_call=handle_tool_call)
 
-            # 5. Final Deduplication
+            # 5. Finalize Result
             unique_comments = []
             seen_keys = set()
             for c in all_comments:
-                key = (c["path"], c["new_line"], c["old_line"], c.get("body", "").strip())
+                key = (c["path"], c["new_position"], c["old_position"], c["body"].strip())
                 if key not in seen_keys: unique_comments.append(c); seen_keys.add(key)
 
-            # 6. Submit Unified Review
-            if unique_comments or all_summaries:
-                api_comments = []
-                for c in unique_comments:
-                    # CRITICAL FIX: Gitea Review API uses 'new_position' and 'old_position'
-                    api_c = {"path": c["path"], "body": c["body"]}
-                    if c["new_line"]: api_c["new_position"] = c["new_line"]
-                    if c["old_line"]: api_c["old_position"] = c["old_line"]
-                    api_comments.append(api_c)
-
-                final_summary = "🔍 **AI 代码审查报告**\n\n" + ("\n\n".join(list(dict.fromkeys(all_summaries))) or "代码整体质量良好。")
-
-                # DEBUG: Output payload to log
-                logger.info(f"Submitting Review to Gitea with {len(api_comments)} comments (using position fields)")
-                debug_payload = {
-                    "event": "COMMENT",
-                    "body": final_summary[:100] + "...", 
-                    "comments_count": len(api_comments),
-                    "commit_id": head_sha,
-                    "sample_comment": api_comments[0] if api_comments else None
-                }
-                logger.debug(f"REVIEW PAYLOAD DEBUG: {json.dumps(debug_payload, indent=2, ensure_ascii=False)}")
-
-                await self.gitea.create_pull_request_review(
-                    owner, repo, pr_number,
-                    body=final_summary,
-                    comments=api_comments,
-                    commit_id=head_sha # MANDATORY FOR MOUNTING
-                )
+            # 6. Privacy & Mention Scrubbing
+            def scrub(text: str) -> str:
+                # Mask common sensitive patterns
+                patterns = [
+                    (r'(?i)(token|key|password|secret|credential|auth|bearer|sha|md5|salt)\s*[:=]\s*["\']?[a-zA-Z0-9_\-\.]{10,}["\']?', r'\1: [REDACTED]'),
+                    (r'(?i)(x-api-key|private_key|private-key)\s*[:=]\s*["\']?.{10,}["\']?', r'\1: [REDACTED]')
+                ]
+                for pattern, repl in patterns:
+                    text = re.sub(pattern, repl, text)
                 
-                # Return empty string to WebhookProcessor to avoid duplicate issue comment
-                return ""
-            
-            return "审查完成，未发现明显问题。"
+                # BREAK LOOP: Replace @username with @ username to prevent triggering webhooks
+                # We scrub the current sender's name as a safeguard for self-mentions
+                if sender_login:
+                    text = re.sub(f"@{sender_login}", f"@ {sender_login}", text)
+                return text
+
+            # 7. Decide final body
+            if not unique_comments and not any("风险" in s or "问题" in s or "建议" in s for s in all_summaries):
+                final_body = "LGTM"
+            else:
+                final_body = scrub("\n\n".join(list(dict.fromkeys(all_summaries))) or "代码审查完成。")
+
+            # 8. Submit Unified Review
+            api_comments = []
+            for c in unique_comments:
+                api_comments.append({
+                    "path": c["path"],
+                    "body": scrub(c["body"]),
+                    "new_position": c["new_position"],
+                    "old_position": c["old_position"]
+                })
+
+            await self.gitea.create_pull_request_review(
+                owner, repo, pr_number,
+                body=final_body,
+                comments=api_comments,
+                commit_id=head_sha
+            )
+            return "" # processor will skip posting since this is empty
 
         except Exception as e:
             logger.error(f"Review failed: {e}", exc_info=True)
-            return f"❌ Review 出错：{str(e)}"
+            # Re-scrubbing even for error messages to be safe
+            quoted_msg = f"> {original_comment_body}\n\n" if original_comment_body else ""
+            err_msg = f"❌ **代码审查失败**\n\n**原因**: {str(e)}"
+            
+            # Manually scrub mentions in the error return since it goes back to processor
+            if sender_login:
+                quoted_msg = re.sub(f"@{sender_login}", f"@ {sender_login}", quoted_msg)
+                err_msg = re.sub(f"@{sender_login}", f"@ {sender_login}", err_msg)
+            
+            return f"{quoted_msg}{err_msg}"
 
     def _parse_diff(self, diff_text: str) -> List[Dict[str, Any]]:
         """Parse diff to get file changes with line numbers."""

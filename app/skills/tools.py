@@ -6,23 +6,6 @@ REVIEW_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_file_content",
-            "description": "获取仓库中其他文件的内容，用于联合分析。调用此工具后继续分析，不要同时输出评论。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "文件路径，例如 src/main.py"
-                    }
-                },
-                "required": ["path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "submit_review",
             "description": "提交最终的代码审查结果。调用此工具表示审查完成，会话结束。只能调用一次。",
             "parameters": {
@@ -48,7 +31,7 @@ REVIEW_TOOLS = [
                                 },
                                 "body": {
                                     "type": "string",
-                                    "description": "评论内容。直接指出问题，严禁包含任何行号前缀或“在第X行”之类的废话。"
+                                    "description": "评论内容。直接指出问题，严禁包含任何行号前缀，严禁在 body 中回显任何发现的 Key 或 Token 原始内容。"
                                 }
                             },
                             "required": ["path", "body"]
@@ -56,10 +39,27 @@ REVIEW_TOOLS = [
                     },
                     "summary": {
                         "type": "string",
-                        "description": "针对本次提供的代码块的简要总结（15字以内）"
+                        "description": "详细的审查总结报告。包含：1. 变更概览；2. 安全评估（必须说明是否有敏感信息泄露）；3. 改进建议。"
                     }
                 },
                 "required": ["comments", "summary"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_file_content",
+            "description": "获取仓库中其他文件的内容，用于联合分析。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "文件路径"
+                    }
+                },
+                "required": ["path"]
             }
         }
     }
@@ -67,21 +67,28 @@ REVIEW_TOOLS = [
 
 
 def get_review_system_prompt() -> str:
-    """Get system prompt for review skill."""
-    return """你是代码审查助手，正在分析 PR 的代码变更。
+    """Get system prompt for review skill with security emphasis."""
+    return """你是资深代码专家和首席安全审计员。请对当前 PR 进行全方位的深度审查。
 
-工作准则：
-1. **行号提取**：必须且只能从 diff 内容前的 `[N|+]` 或 `[N|-]` 标记中提取行号 N。严禁自行计算或猜测。
-2. **精准定位**：
-   - 发现新增/修改行的问题，仅提供 `new_position`。
-   - 发现已删除代码的问题（如不该删），仅提供 `old_position`。
-   - 绝对不要同时提供 `new_position` 和 `old_position`。
-3. **分块模式**：当前 PR 被拆分为多个部分。请仅针对当前看到的变更块提交 `submit_review`。
-4. **精简评论**：
-   - 只对确实存在逻辑错误、安全隐患或严重规范问题的代码行添加评论。
-   - 如果一个逻辑块有多个问题，合并为一条评论提交到该块的核心行上。
-   - 评论 body 应直接、客观，例如：“此处变量未定义可能导致运行时错误”。
-5. **获取上下文**：如果当前变更块不足以判断逻辑（如调用了未见的函数），请先调用 `get_file_content` 查看源文件。"""
+### 核心任务（按重要性排序）：
+1. **🛡️ 隐私与安全审查（最高优先级）**：
+   - 严禁任何硬编码的隐私泄露（Key、Token、密码、证书、公私钥、环境变量文件等）。
+   - **必须扫描**变更代码中的疑似凭证（如长随机字符串、特定 API Key 格式）。
+   - **严禁规则**：一旦发现泄露，在行评论中发出警示并要求删除，但**绝对不要**在评论内容中写出该 Key 的具体内容（可使用"检测到硬编码 Token"等通用表述）。
+
+2. **⚖️ 逻辑与质量评估**：
+   - 检查是否存在语法错误、死循环、性能瓶颈、资源未释放、潜在的空指针或数组越界。
+   - 评估代码是否符合项目的架构风格和最佳实践。
+
+3. **📊 结构化总结报告**：
+   - 📌 **变更概览**：用 1-2 句话简洁描述本次 PR 实现了什么。
+   - 🛡️ **安全评估**：明确状态，例如“通过：未发现敏感信息泄露”或“风险：发现硬编码密码”。
+   - 💡 **核心建议**：指出架构或逻辑层面的关键改进点（如果有）。
+
+### 评审准则：
+- **行号精准**：严格从 diff 的 `[N|+]` 或 `[N|-]` 中提取行号 N。
+- **宁缺毋滥**：只对确实有问题的地方发评论。如果代码质量很高，无需强行评论，只需在总结中给出正面评价。
+- **LGTM 倾向**：如果代码没有功能缺陷且通过了安全评估，总结的开头应包含积极的信号。"""
 
 
 def get_analyze_tools() -> List[dict]:

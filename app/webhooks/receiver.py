@@ -64,16 +64,9 @@ async def receive_gitea_webhook(
     action = payload.get("action", "unknown")
     logger.info(f"Event: {event_type}, Action: {action}")
 
-    # Only process created/opened actions - skip edited/deleted/closed etc
-    allowed_actions = ["created", "opened"]
-    if action.lower() not in allowed_actions:
-        logger.debug(f"Skipping action: {action}, only processing created/opened")
-        return Response(status_code=200)
-
     # Get context from Authorization header
     try:
         instance_id, account_id = get_context_from_header(authorization)
-        logger.debug(f"Context decoded: instance_id={instance_id}, account_id={account_id}")
     except HTTPException:
         raise
 
@@ -97,6 +90,12 @@ async def receive_gitea_webhook(
         return Response(status_code=200)
     finally:
         db.close()
+
+    # Only process created/opened actions - skip edited/deleted/closed etc
+    allowed_actions = ["created", "opened"]
+    if action.lower() not in allowed_actions:
+        logger.debug(f"Skipping action: {action}, only processing created/opened")
+        return Response(status_code=200)
 
     # Determine reference_id for idempotency
     reference_id = ""
