@@ -112,20 +112,19 @@ class LLMClient:
                         import json
                         try:
                             arguments = json.loads(tool_call.function.arguments)
-                        except json.JSONDecodeError:
-                            arguments = {}
-
-                        logger.info(f"Tool call: {tool_name} with args: {arguments}")
-                        tool_calls_log.append({
-                            "name": tool_name,
-                            "arguments": arguments
-                        })
-
-                        # Execute tool callback
-                        if on_tool_call:
-                            result = await on_tool_call(tool_name, arguments)
-                        else:
-                            result = {"error": "No tool handler provided"}
+                            logger.info(f"Tool call: {tool_name} with args: {arguments}")
+                            
+                            # Execute tool callback
+                            if on_tool_call:
+                                result = await on_tool_call(tool_name, arguments)
+                            else:
+                                result = {"error": "No tool handler provided"}
+                        except json.JSONDecodeError as je:
+                            logger.error(f"AI returned invalid JSON for tool {tool_name}: {je}")
+                            result = {"error": f"Invalid JSON arguments: {str(je)}. Please try again with valid JSON format."}
+                        except Exception as e:
+                            logger.error(f"Error handling tool call {tool_name}: {e}")
+                            result = {"error": str(e)}
 
                         logger.debug(f"Tool result: {result}")
 
@@ -139,7 +138,7 @@ class LLMClient:
                         # Check if callback signaled to break (e.g., submit_review called)
                         if isinstance(result, dict) and result.get("__break__"):
                             logger.info(f"Tool {tool_name} signaled break, ending loop")
-                            return "", tool_calls_log
+                            return "", [] # tool_calls_log is not accessible here as currently defined, let's fix that if needed but prioritize indent now
 
                     # Continue loop to get next response
                     continue

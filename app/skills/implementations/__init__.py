@@ -86,25 +86,19 @@ class LabelSkill(BaseSkill):
         payload: Dict[Any, Any]
     ) -> str:
         """Add labels to the issue/PR - silently, no reply."""
-        # Extract labels from intent (remove "label" keyword)
         parts = intent.strip().split()
         labels = [p for p in parts if p.lower() != "label"]
-
-        if not labels:
-            return ""
+        if not labels: return ""
 
         owner, repo = self.get_repo_info(payload)
         issue_number = self.get_issue_number(payload)
-
-        if not owner or not repo or not issue_number:
-            return ""
+        if not owner or not repo or not issue_number: return ""
 
         try:
             await self.gitea.add_issue_label(owner, repo, issue_number, labels)
             logger.info(f"Added labels {labels} to {owner}/{repo}#{issue_number}")
         except Exception as e:
             logger.error(f"Failed to add labels: {e}", exc_info=True)
-
         return ""
 
 
@@ -120,9 +114,7 @@ class AnalyzeSkill(BaseSkill):
     ) -> str:
         """Analyze project docs and answer the question naturally."""
         owner, repo = self.get_repo_info(payload)
-
-        if not owner or not repo:
-            return "抱歉，我暂时无法获取这个仓库的信息。"
+        if not owner or not repo: return "抱歉，我暂时无法获取这个仓库的信息。"
 
         max_files = self.config.get("copilot_docs_limit", 10)
         max_size_kb = self.config.get("copilot_docs_size_limit", 25)
@@ -146,11 +138,8 @@ class AnalyzeSkill(BaseSkill):
             if issue_body: context_parts.append(f"**详细内容:** {issue_body[:500]}")
 
         context = "\n\n".join(context_parts) if context_parts else "暂无项目文档信息"
-
-        system_prompt = """你是项目团队的 AI 助手，正在和团队成员讨论问题。回答要求：简洁自然、直接给出解决方案、适当使用表情。"""
+        system_prompt = """你是项目团队的 AI 助手，回答要求简洁、自然、直接。"""
         prompt = f"""{sender} 问：{intent}\n\n{context}"""
-
-        logger.info(f"Analyzing question for {owner}/{repo}")
         response = await self.llm.generate(prompt, system_prompt, max_tokens=1500)
         return response
 
@@ -165,16 +154,28 @@ class ReviewSkill(BaseSkill):
         comment: Optional[Dict],
         payload: Dict[Any, Any]
     ) -> str:
-        """Review PR code changes. Supports single-account self-triggering via mention scrubbing."""
+        """Review PR code changes with high precision and formatting protection."""
         owner, repo = self.get_repo_info(payload)
         pr_number = self.get_issue_number(payload)
-        original_comment_body = comment.get("body", "") if comment else ""
-        
-        # Get bot username from account info (passed via payload or context)
-        # In this project, bot_username is available in payload sender context 
-        # but we use account settings. Here we'll just extract from payload logic.
-        repository = payload.get("repository", {})
+        original_comment_body = comment.get("body", "") if comment else "@caesar review"
         sender_login = payload.get("sender", {}).get("login", "")
+
+        def scrub(text: str) -> str:
+            """Precision scrubbing: protects formatting and Chinese characters."""
+            if not text: return ""
+            
+            # 1. Mask sensitive English keywords only when they look like keys (with : or =)
+            # Using word boundaries (\b) and precision patterns to avoid mangling Chinese/Markdown
+            sensitive_keywords = r'token|key|password|secret|credential|auth|bearer|sha|md5|salt|api_key|access_token|private_key|passwd|pwd'
+            patterns = [
+                (rf'(?i)\b({sensitive_keywords})\b\s*[:=：]\s*["\']?[a-zA-Z0-9_\-\.]{8,}["\']?', r'\1: [REDACTED]'),
+            ]
+            for p, r in patterns: text = re.sub(p, r, text)
+            
+            # 2. Prevent dead loops by inserting space after @mention
+            if sender_login:
+                text = re.sub(rf"@{re.escape(sender_login)}\b", f"@ {sender_login}", text)
+            return text
 
         if not payload.get("is_pull", False):
             return "这个命令只在 Pull Request 里有效哦 🙃"
@@ -207,11 +208,12 @@ class ReviewSkill(BaseSkill):
                 current_chunk.append(file); current_chunk_lines += len(file['lines'])
             if current_chunk: chunks.append(current_chunk)
 
-            # 4. Process Chunks
+            # 4. AI Process
             from ..tools import REVIEW_TOOLS, get_review_system_prompt
             all_comments = []
             all_summaries = []
             file_cache: Dict[str, str] = {}
+            successfully_processed_chunks = 0
 
             for i, chunk in enumerate(chunks):
                 diff_context = self._format_diff_for_review(chunk)
@@ -223,13 +225,13 @@ class ReviewSkill(BaseSkill):
                         if content: file_cache[path] = content; return {"path": path, "content": content}
                         return {"error": "File not found"}
                     elif tool_name == "submit_review":
-                        raw_comments = args.get("comments", [])
-                        if isinstance(raw_comments, str):
-                            try: raw_comments = json.loads(raw_comments)
+                        raw_c = args.get("comments", [])
+                        if isinstance(raw_c, str):
+                            try: raw_c = json.loads(raw_c)
                             except: pass
-                        if isinstance(raw_comments, dict): raw_comments = [raw_comments]
+                        if isinstance(raw_c, dict): raw_c = [raw_c]
                         
-                        for c in raw_comments:
+                        for c in (raw_c or []):
                             path, body = c.get("path"), c.get("body")
                             if not path or not body: continue
                             nl = c.get("new_position") or c.get("new_line")
@@ -237,53 +239,42 @@ class ReviewSkill(BaseSkill):
                             nl = int(nl) if nl is not None else None
                             ol = int(ol) if ol is not None else None
                             
-                            is_valid = False
                             if path in valid_lines:
-                                if nl and nl in valid_lines[path]["new"]: is_valid = True
-                                elif ol and ol in valid_lines[path]["old"]: is_valid = True
-                            
-                            if is_valid:
-                                all_comments.append({"path": path, "new_position": nl, "old_position": ol, "body": body})
-                            else:
-                                all_summaries.append(f"**[{path}]**: {body}")
+                                if nl and nl in valid_lines[path]["new"]: 
+                                    all_comments.append({"path": path, "new_position": nl, "old_position": None, "body": body})
+                                elif ol and ol in valid_lines[path]["old"]: 
+                                    all_comments.append({"path": path, "new_position": None, "old_position": ol, "body": body})
+                                else:
+                                    all_summaries.append(f"**[{path}] 补充记录**: {body}")
                         
                         if args.get("summary"): all_summaries.append(args["summary"])
                         return {"success": True, "__break__": True}
                     return {"error": "Unknown tool"}
 
                 prompt = f"审查 PR #{pr_number} (第 {i+1}/{len(chunks)} 部分)\n标题: {pr_title}\n\n{diff_context}"
-                await self.llm.generate_with_tools(prompt, get_review_system_prompt(), REVIEW_TOOLS, on_tool_call=handle_tool_call)
+                res, _ = await self.llm.generate_with_tools(prompt, get_review_system_prompt(), REVIEW_TOOLS, on_tool_call=handle_tool_call)
+                if "AI 调用出错" in res:
+                    raise Exception(f"AI 服务响应异常: {res}")
+                successfully_processed_chunks += 1
 
             # 5. Finalize Result
+            if successfully_processed_chunks == 0:
+                raise Exception("无法从 AI 获取有效的审查结果。")
+
             unique_comments = []
             seen_keys = set()
             for c in all_comments:
                 key = (c["path"], c["new_position"], c["old_position"], c["body"].strip())
                 if key not in seen_keys: unique_comments.append(c); seen_keys.add(key)
 
-            # 6. Privacy & Mention Scrubbing
-            def scrub(text: str) -> str:
-                # Mask common sensitive patterns
-                patterns = [
-                    (r'(?i)(token|key|password|secret|credential|auth|bearer|sha|md5|salt)\s*[:=]\s*["\']?[a-zA-Z0-9_\-\.]{10,}["\']?', r'\1: [REDACTED]'),
-                    (r'(?i)(x-api-key|private_key|private-key)\s*[:=]\s*["\']?.{10,}["\']?', r'\1: [REDACTED]')
-                ]
-                for pattern, repl in patterns:
-                    text = re.sub(pattern, repl, text)
-                
-                # BREAK LOOP: Replace @username with @ username to prevent triggering webhooks
-                # We scrub the current sender's name as a safeguard for self-mentions
-                if sender_login:
-                    text = re.sub(f"@{sender_login}", f"@ {sender_login}", text)
-                return text
+            # Structured Report
+            summary_text = "\n\n".join(list(dict.fromkeys(all_summaries)))
+            
+            # Handle LGTM
+            has_issues = len(unique_comments) > 0 or any(kw in summary_text for kw in ["❌", "发现风险", "存在缺陷", "隐患", "建议修改"])
+            final_body = "LGTM" if not has_issues else scrub(summary_text)
 
-            # 7. Decide final body
-            if not unique_comments and not any("风险" in s or "问题" in s or "建议" in s for s in all_summaries):
-                final_body = "LGTM"
-            else:
-                final_body = scrub("\n\n".join(list(dict.fromkeys(all_summaries))) or "代码审查完成。")
-
-            # 8. Submit Unified Review
+            # 6. Submit Unified Review
             api_comments = []
             for c in unique_comments:
                 api_comments.append({
@@ -299,20 +290,12 @@ class ReviewSkill(BaseSkill):
                 comments=api_comments,
                 commit_id=head_sha
             )
-            return "" # processor will skip posting since this is empty
+            return "" 
 
         except Exception as e:
             logger.error(f"Review failed: {e}", exc_info=True)
-            # Re-scrubbing even for error messages to be safe
-            quoted_msg = f"> {original_comment_body}\n\n" if original_comment_body else ""
-            err_msg = f"❌ **代码审查失败**\n\n**原因**: {str(e)}"
-            
-            # Manually scrub mentions in the error return since it goes back to processor
-            if sender_login:
-                quoted_msg = re.sub(f"@{sender_login}", f"@ {sender_login}", quoted_msg)
-                err_msg = re.sub(f"@{sender_login}", f"@ {sender_login}", err_msg)
-            
-            return f"{quoted_msg}{err_msg}"
+            quoted = f"> {scrub(original_comment_body)}\n\n"
+            return f"{quoted}❌ **代码审查失败**\n\n**原因**: {scrub(str(e))}"
 
     def _parse_diff(self, diff_text: str) -> List[Dict[str, Any]]:
         """Parse diff to get file changes with line numbers."""
@@ -336,7 +319,7 @@ class ReviewSkill(BaseSkill):
         return file_changes
 
     def _format_diff_for_review(self, file_changes: List[Dict], max_lines: int = 1000) -> str:
-        """Format diff for AI review with standard format."""
+        """Format diff for AI review."""
         result = []; total_lines = 0
         for file in file_changes:
             result.append(f"\n## File: {file['path']}")

@@ -20,11 +20,22 @@ def check_idempotency(db: Session, event_type: str, reference_id: str) -> bool:
     return existing is not None
 
 
-def record_processed_event(db: Session, event_type: str, reference_id: str):
-    """Record that an event has been processed."""
-    event = ProcessedEvent(event_type=event_type, reference_id=reference_id)
-    db.add(event)
-    db.commit()
+def try_record_event(db: Session, event_type: str, reference_id: str) -> bool:
+    """Try to record an event atomically. Returns True if successfully recorded (first time)."""
+    try:
+        # Check if already exists first
+        if check_idempotency(db, event_type, reference_id):
+            return False
+            
+        event = ProcessedEvent(event_type=event_type, reference_id=reference_id)
+        db.add(event)
+        db.commit()
+        return True
+    except Exception as e:
+        db.rollback()
+        # If commit failed due to unique constraint or other DB error
+        logger.warning(f"Failed to record event {event_type}/{reference_id}: {e}")
+        return False
 
 
 def is_self_trigger(payload: dict, bot_username: str) -> bool:
@@ -98,26 +109,26 @@ async def receive_gitea_webhook(
         return Response(status_code=200)
 
     # Determine reference_id for idempotency
-    reference_id = ""
+    ref_raw = ""
     if event_type == "issue_comment":
-        reference_id = str(payload.get("comment", {}).get("id", ""))
+        ref_raw = payload.get("comment", {}).get("id")
     elif event_type == "issues":
-        reference_id = str(payload.get("issue", {}).get("id", ""))
+        ref_raw = payload.get("issue", {}).get("id")
     elif event_type == "pull_request":
-        reference_id = str(payload.get("pull_request", {}).get("id", ""))
+        ref_raw = payload.get("pull_request", {}).get("id")
+    
+    reference_id = str(ref_raw) if ref_raw else ""
 
-    # Check idempotency
+    # Check idempotency atomically
     db = SessionLocal()
     try:
-        if reference_id and check_idempotency(db, event_type, reference_id):
-            logger.info(f"Event already processed: {event_type}/{reference_id}")
-            return Response(status_code=200)
-
         if reference_id:
-            record_processed_event(db, event_type, reference_id)
-            logger.debug(f"Event recorded: {event_type}/{reference_id}")
+            if not try_record_event(db, event_type, reference_id):
+                logger.info(f"Event already processed or processing: {event_type}/{reference_id}")
+                return Response(status_code=200)
+            logger.debug(f"Event recorded successfully: {event_type}/{reference_id}")
     except Exception as e:
-        logger.error(f"Idempotency check error: {e}")
+        logger.error(f"Idempotency error: {e}")
     finally:
         db.close()
 
