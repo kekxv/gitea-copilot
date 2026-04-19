@@ -369,6 +369,8 @@ async def admin_config_update(
     llm_model: str = Form(default="gpt-4o-mini"),
     copilot_docs_limit: int = Form(default=10),
     copilot_docs_size_limit: int = Form(default=25),
+    ai_max_tokens: int = Form(default=8000),
+    ai_context_limit: int = Form(default=50000),
     clear_api_key: str = Form(default=""),
     db: Session = Depends(get_db)
 ):
@@ -381,6 +383,8 @@ async def admin_config_update(
     config.llm_model = llm_model
     config.copilot_docs_limit = copilot_docs_limit
     config.copilot_docs_size_limit = copilot_docs_size_limit
+    config.ai_max_tokens = ai_max_tokens
+    config.ai_context_limit = ai_context_limit
 
     # Handle API key: clear if requested, update if provided
     if clear_api_key:

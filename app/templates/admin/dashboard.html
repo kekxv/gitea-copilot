@@ -59,6 +59,25 @@
                 </div>
             </div>
 
+            <div class="card-section">
+                <h4>AI Token 配置</h4>
+                <p class="text-muted">控制 AI 调用的 token 使用量，避免超出限制</p>
+
+                <div class="grid grid-2">
+                    <div class="form-group">
+                        <label for="ai_max_tokens">单次调用最大 Token</label>
+                        <input type="number" id="ai_max_tokens" name="ai_max_tokens" value="{{ config.ai_max_tokens or 8000 }}" min="1000" max="32000">
+                        <small class="form-hint">每次 AI 请求的最大输出 token</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="ai_context_limit">上下文 Token 限制</label>
+                        <input type="number" id="ai_context_limit" name="ai_context_limit" value="{{ config.ai_context_limit or 50000 }}" min="10000" max="200000">
+                        <small class="form-hint">获取额外文件内容的总 token 上限</small>
+                    </div>
+                </div>
+            </div>
+
             <button type="submit" class="btn btn-primary">保存配置</button>
             {% if config.llm_api_key %}
             <button type="submit" name="clear_api_key" value="1" class="btn btn-outline btn-sm" style="margin-left: 0.5rem;">清除 API Key</button>

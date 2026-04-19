@@ -37,7 +37,9 @@ class SkillRouter:
         """Load system config for skill limits."""
         config = {
             "copilot_docs_limit": 10,
-            "copilot_docs_size_limit": 25
+            "copilot_docs_size_limit": 25,
+            "ai_max_tokens": 8000,
+            "ai_context_limit": 50000
         }
 
         if self.db_session:
@@ -48,6 +50,10 @@ class SkillRouter:
                         config["copilot_docs_limit"] = sys_config.copilot_docs_limit
                     if sys_config.copilot_docs_size_limit:
                         config["copilot_docs_size_limit"] = sys_config.copilot_docs_size_limit
+                    if sys_config.ai_max_tokens:
+                        config["ai_max_tokens"] = sys_config.ai_max_tokens
+                    if sys_config.ai_context_limit:
+                        config["ai_context_limit"] = sys_config.ai_context_limit
             except Exception as e:
                 logger.warning(f"Failed to load config: {e}")
 

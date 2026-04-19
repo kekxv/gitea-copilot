@@ -30,6 +30,10 @@ class GiteaClient:
     ) -> Dict[Any, Any]:
         """Make a request to Gitea API."""
         url = f"{self.base_url}/api/v1{path}"
+        
+        if data and method == "POST":
+            import json
+            logger.debug(f"Gitea API POST {path} | Payload: {json.dumps(data, ensure_ascii=False)}")
 
         async with httpx.AsyncClient() as client:
             response = await client.request(
@@ -296,6 +300,59 @@ class GiteaClient:
         except Exception as e:
             logger.error(f"Failed to get PR diff: {e}")
             return ""
+
+    async def get_pull_request_files(self, owner: str, repo: str, pr_number: int) -> List[Dict]:
+        """Get list of files changed in a pull request."""
+        return await self._request("GET", f"/repos/{owner}/{repo}/pulls/{pr_number}/files")
+
+    async def create_pull_request_review(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        body: str,
+        comments: List[Dict[str, Any]],
+        event: str = "COMMENT",
+        commit_id: Optional[str] = None
+    ) -> Dict:
+        """Create a review on a pull request."""
+        data = {
+            "event": event,
+            "body": body,
+            "comments": comments
+        }
+        if commit_id:
+            data["commit_id"] = commit_id
+
+        url = f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews"
+        return await self._request("POST", url, data=data)
+
+    async def create_pull_request_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        path: str,
+        body: str,
+        new_line: Optional[int] = None,
+        old_line: Optional[int] = None
+    ) -> Dict:
+        """Create an individual line comment on a pull request.
+        
+        This is more robust than the Review API for line mounting.
+        """
+        data = {
+            "path": path,
+            "body": body
+        }
+        if new_line: data["new_line"] = new_line
+        if old_line: data["old_line"] = old_line
+
+        return await self._request(
+            "POST",
+            f"/repos/{owner}/{repo}/pulls/{pr_number}/comments",
+            data=data
+        )
 
     # ============ User Webhook Operations ============
 

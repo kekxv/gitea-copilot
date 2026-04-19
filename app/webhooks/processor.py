@@ -92,7 +92,7 @@ class WebhookProcessor:
         response = await self._route_to_skill(intent, issue, comment, payload, db)
         logger.info(f"AI response generated: {response[:100] if response else 'None'}...")
 
-        if response:
+        if response and response.strip():
             # Remove any @mentions of self from the response
             response = self._remove_self_mentions(response)
             logger.info(f"Posting comment to Gitea...")

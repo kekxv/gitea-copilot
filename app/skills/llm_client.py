@@ -1,6 +1,6 @@
 import logging
 from openai import AsyncOpenAI
-from typing import Optional
+from typing import Optional, List, Dict, Any, Callable
 import os
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,123 @@ class LLMClient:
     ) -> str:
         """Generate a response from the LLM."""
         return await self._call_api(prompt, system_prompt, max_tokens, temperature)
+
+    async def generate_with_tools(
+        self,
+        prompt: str,
+        system_prompt: str,
+        tools: List[Dict[str, Any]],
+        max_iterations: int = 10,
+        max_tokens: int = 8000,
+        on_tool_call: Callable[[str, Dict], Any] = None
+    ) -> tuple[str, List[Dict]]:
+        """Generate response with tool call support.
+
+        Args:
+            prompt: User prompt
+            system_prompt: System prompt
+            tools: OpenAI tools definition
+            max_iterations: Maximum tool call iterations
+            max_tokens: Maximum response tokens
+            on_tool_call: Async callback for tool calls, receives (tool_name, arguments)
+
+        Returns:
+            (final_response, tool_calls_log)
+        """
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        tool_calls_log = []
+        iteration = 0
+
+        logger.info(f"Starting tool call loop with {len(tools)} tools, max_iterations={max_iterations}")
+
+        while iteration < max_iterations:
+            iteration += 1
+            logger.debug(f"Tool call iteration {iteration}")
+
+            try:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                    max_tokens=max_tokens
+                )
+
+                message = response.choices[0].message
+
+                # Check if AI wants to call tools
+                if message.tool_calls:
+                    # Add assistant message with tool calls to history
+                    messages.append({
+                        "role": "assistant",
+                        "content": message.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": tc.type,
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments
+                                }
+                            }
+                            for tc in message.tool_calls
+                        ]
+                    })
+
+                    # Process each tool call
+                    for tool_call in message.tool_calls:
+                        tool_name = tool_call.function.name
+                        import json
+                        try:
+                            arguments = json.loads(tool_call.function.arguments)
+                        except json.JSONDecodeError:
+                            arguments = {}
+
+                        logger.info(f"Tool call: {tool_name} with args: {arguments}")
+                        tool_calls_log.append({
+                            "name": tool_name,
+                            "arguments": arguments
+                        })
+
+                        # Execute tool callback
+                        if on_tool_call:
+                            result = await on_tool_call(tool_name, arguments)
+                        else:
+                            result = {"error": "No tool handler provided"}
+
+                        logger.debug(f"Tool result: {result}")
+
+                        # Add tool result to messages
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(result) if isinstance(result, dict) else str(result)
+                        })
+
+                        # Check if callback signaled to break (e.g., submit_review called)
+                        if isinstance(result, dict) and result.get("__break__"):
+                            logger.info(f"Tool {tool_name} signaled break, ending loop")
+                            return "", tool_calls_log
+
+                    # Continue loop to get next response
+                    continue
+
+                # No tool calls - this is the final response
+                final_content = message.content or ""
+                logger.info(f"Tool call loop completed after {iteration} iterations")
+                return final_content, tool_calls_log
+
+            except Exception as e:
+                logger.error(f"Tool call error at iteration {iteration}: {e}", exc_info=True)
+                return f"AI 调用出错: {str(e)}", tool_calls_log
+
+        # Reached max iterations
+        logger.warning(f"Reached max iterations ({max_iterations})")
+        return "达到最大迭代次数，请简化请求或增加限制。", tool_calls_log
 
     async def _call_api(
         self,

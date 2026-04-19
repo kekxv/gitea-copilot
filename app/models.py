@@ -24,6 +24,9 @@ class SystemConfig(Base):
     # Copilot docs config
     copilot_docs_limit = Column(Integer, nullable=True, default=10)  # Max number of .gitea/copilot docs
     copilot_docs_size_limit = Column(Integer, nullable=True, default=25)  # Max size in KB
+    # AI token limits
+    ai_max_tokens = Column(Integer, nullable=True, default=8000)  # Max tokens per AI call
+    ai_context_limit = Column(Integer, nullable=True, default=50000)  # Max total context tokens
 
 
 class GiteaInstance(Base):
