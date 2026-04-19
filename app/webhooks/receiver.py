@@ -182,7 +182,7 @@ async def process_webhook_async(
             return
 
         from .processor import WebhookProcessor
-        processor = WebhookProcessor(instance, account)
+        processor = WebhookProcessor(instance, account, db)
 
         await processor.process(event_type, payload, db)
         logger.info(f"=== BACKGROUND PROCESSING COMPLETED ===")

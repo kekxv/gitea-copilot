@@ -1,19 +1,58 @@
-import httpx
+from .base import BaseGitClient
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
-import hmac
-import hashlib
-import base64
+import httpx
+import json
 import logging
+import base64
 
 logger = logging.getLogger(__name__)
 
 
-class GiteaClient:
-    """Client for interacting with Gitea REST API."""
+class GiteaClient(BaseGitClient):
+    """Client for interacting with Gitea REST API with automatic token management."""
 
-    def __init__(self, base_url: str, access_token: str):
+    def __init__(
+        self,
+        base_url: str,
+        access_token: str,
+        account_id: Optional[int] = None,
+        db_session: Optional[Any] = None
+    ):
         self.base_url = base_url.rstrip("/")
         self.access_token = access_token
+        self.account_id = account_id
+        self.db_session = db_session
+
+    async def _ensure_valid_token(self):
+        """Check if token is about to expire and refresh if needed."""
+        if not self.account_id or not self.db_session:
+            return
+
+        from ..models import GiteaAccount, GiteaInstance
+        
+        account = self.db_session.query(GiteaAccount).filter(GiteaAccount.id == self.account_id).first()
+        if not account or not account.token_expires_at:
+            return
+
+        # Refresh if expires in less than 10 minutes
+        if datetime.utcnow() + timedelta(minutes=10) >= account.token_expires_at:
+            logger.info(f"Token for account {self.account_id} is near expiry, refreshing...")
+            
+            instance = self.db_session.query(GiteaInstance).filter(GiteaInstance.id == account.instance_id).first()
+            if not instance:
+                logger.error("Cannot refresh token: Instance not found")
+                return
+
+            from ..tasks.token_manager import refresh_token
+            success = await refresh_token(account, instance)
+            
+            if success:
+                self.db_session.commit()
+                self.access_token = account.access_token
+                logger.info(f"Successfully refreshed token for account {self.account_id}")
+            else:
+                logger.error(f"Failed to refresh token for account {self.account_id}")
 
     def _headers(self) -> Dict[str, str]:
         return {
@@ -28,11 +67,12 @@ class GiteaClient:
         data: Optional[Dict] = None,
         params: Optional[Dict] = None
     ) -> Dict[Any, Any]:
-        """Make a request to Gitea API."""
+        """Make a request to Gitea API with auto-refresh check."""
+        await self._ensure_valid_token()
+        
         url = f"{self.base_url}/api/v1{path}"
         
         if data and method == "POST":
-            import json
             logger.debug(f"Gitea API POST {path} | Payload: {json.dumps(data, ensure_ascii=False)}")
 
         async with httpx.AsyncClient() as client:
@@ -44,8 +84,12 @@ class GiteaClient:
                 params=params
             )
 
+            if response.status_code == 401:
+                logger.warning(f"Gitea API 401 Unauthorized for {path}. Token might have been revoked.")
+                # We could try one more refresh here if needed
+
             if response.status_code not in (200, 201, 204):
-                logger.error(f"Gitea API error: status {response.status_code}")
+                logger.error(f"Gitea API error: status {response.status_code} on {path}")
                 raise Exception(f"Gitea API error: {response.status_code}")
 
             if response.status_code == 204:
@@ -60,6 +104,7 @@ class GiteaClient:
         params: Optional[Dict] = None
     ) -> str:
         """Make a request and return raw text content."""
+        await self._ensure_valid_token()
         url = f"{self.base_url}/api/v1{path}"
 
         async with httpx.AsyncClient() as client:

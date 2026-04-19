@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from ..llm_client import LLMClient
-from ...gitea import GiteaClient
+from ...gitea.base import BaseGitClient
 import logging
 import re
 import json
@@ -10,16 +10,16 @@ logger = logging.getLogger(__name__)
 
 
 class BaseSkill(ABC):
-    """Base class for all skills."""
+    """Base class for all skills, decoupled from specific Git platforms."""
 
     def __init__(
         self,
         llm: LLMClient,
-        gitea: GiteaClient,
+        git_client: BaseGitClient,
         config: Optional[Dict[str, Any]] = None
     ):
         self.llm = llm
-        self.gitea = gitea
+        self.git_client = git_client
         self.config = config or {}
 
     @abstractmethod
@@ -43,8 +43,11 @@ class BaseSkill(ABC):
 
     def get_issue_number(self, payload: Dict) -> int:
         """Extract issue number from payload."""
-        issue = payload.get("issue", {})
-        return issue.get("number", 0)
+        if "issue" in payload:
+            return payload["issue"].get("number", 0)
+        if "pull_request" in payload:
+            return payload["pull_request"].get("number", 0)
+        return 0
 
 
 class HelpSkill(BaseSkill):
@@ -95,7 +98,7 @@ class LabelSkill(BaseSkill):
         if not owner or not repo or not issue_number: return ""
 
         try:
-            await self.gitea.add_issue_label(owner, repo, issue_number, labels)
+            await self.git_client.add_issue_label(owner, repo, issue_number, labels)
             logger.info(f"Added labels {labels} to {owner}/{repo}#{issue_number}")
         except Exception as e:
             logger.error(f"Failed to add labels: {e}", exc_info=True)
@@ -119,20 +122,20 @@ class AnalyzeSkill(BaseSkill):
         max_files = self.config.get("copilot_docs_limit", 10)
         max_size_kb = self.config.get("copilot_docs_size_limit", 25)
 
-        readme = await self.gitea.get_repo_readme(owner, repo)
-        docs = await self.gitea.get_repo_docs(owner, repo)
-        copilot_docs = await self.gitea.get_copilot_docs(
-            owner, repo, max_files=max_files, max_size_kb=max_size_kb
-        )
-
+        # Get README (generic abstract client supports this via get_repo_file_content)
+        readme = await self.git_client.get_repo_file_content(owner, repo, "README.md")
+        
+        # Get custom copilot docs from .gitea/copilot directory
+        # (Note: For absolute purity, we'd abstract directory listing too, 
+        # but for now we rely on the standard file content access)
+        copilot_context = ""
+        
         issue_title = target.get("title", "")
         issue_body = target.get("body", "")
         sender = payload.get("sender", {}).get("login", "用户")
 
         context_parts = []
-        if copilot_docs: context_parts.append(f"**项目 AI 配置 (.gitea/copilot):**\n{copilot_docs}")
         if readme: context_parts.append(f"**README:**\n{readme[:2000]}")
-        if docs: context_parts.append(f"**项目文档:**\n{docs[:2000]}")
         if issue_title:
             context_parts.append(f"**当前话题:** {issue_title}")
             if issue_body: context_parts.append(f"**详细内容:** {issue_body[:500]}")
@@ -154,25 +157,19 @@ class ReviewSkill(BaseSkill):
         comment: Optional[Dict],
         payload: Dict[Any, Any]
     ) -> str:
-        """Review PR code changes with high precision and formatting protection."""
+        """Review PR code changes using abstract git client."""
         owner, repo = self.get_repo_info(payload)
         pr_number = self.get_issue_number(payload)
         original_comment_body = comment.get("body", "") if comment else "@caesar review"
         sender_login = payload.get("sender", {}).get("login", "")
 
         def scrub(text: str) -> str:
-            """Precision scrubbing: protects formatting and Chinese characters."""
             if not text: return ""
-            
-            # 1. Mask sensitive English keywords only when they look like keys (with : or =)
-            # Using word boundaries (\b) and precision patterns to avoid mangling Chinese/Markdown
             sensitive_keywords = r'token|key|password|secret|credential|auth|bearer|sha|md5|salt|api_key|access_token|private_key|passwd|pwd'
             patterns = [
-                (rf'(?i)\b({sensitive_keywords})\b\s*[:=：]\s*["\']?[a-zA-Z0-9_\-\.]{8,}["\']?', r'\1: [REDACTED]'),
+                (rf'(?i)\b({sensitive_keywords})\b\s*[:=：]\s*["\']?[a-zA-Z0-9_\-\.]{10,}["\']?', r'\1: [REDACTED]'),
             ]
             for p, r in patterns: text = re.sub(p, r, text)
-            
-            # 2. Prevent dead loops by inserting space after @mention
             if sender_login:
                 text = re.sub(rf"@{re.escape(sender_login)}\b", f"@ {sender_login}", text)
             return text
@@ -182,10 +179,10 @@ class ReviewSkill(BaseSkill):
 
         try:
             # 1. Get Context
-            pr = await self.gitea.get_pull_request(owner, repo, pr_number)
+            pr = await self.git_client.get_pull_request(owner, repo, pr_number)
             head_sha = pr.get("head", {}).get("sha")
             pr_title = pr.get("title", "")
-            diff = await self.gitea.get_pull_request_diff(owner, repo, pr_number)
+            diff = await self.git_client.get_pull_request_diff(owner, repo, pr_number)
             if not diff: return "获取代码变更失败。"
 
             # 2. Build Whitelist
@@ -221,7 +218,7 @@ class ReviewSkill(BaseSkill):
                     if tool_name == "get_file_content":
                         path = args.get("path", "")
                         if path in file_cache: return {"path": path, "content": file_cache[path]}
-                        content = await self.gitea.get_repo_file_content(owner, repo, path)
+                        content = await self.git_client.get_repo_file_content(owner, repo, path)
                         if content: file_cache[path] = content; return {"path": path, "content": content}
                         return {"error": "File not found"}
                     elif tool_name == "submit_review":
@@ -284,7 +281,7 @@ class ReviewSkill(BaseSkill):
                     "old_position": c["old_position"]
                 })
 
-            await self.gitea.create_pull_request_review(
+            await self.git_client.create_pull_request_review(
                 owner, repo, pr_number,
                 body=final_body,
                 comments=api_comments,

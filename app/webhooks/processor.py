@@ -11,10 +11,15 @@ logger = logging.getLogger(__name__)
 class WebhookProcessor:
     """Process webhook events and trigger AI skills."""
 
-    def __init__(self, instance: GiteaInstance, account: GiteaAccount):
+    def __init__(self, instance: GiteaInstance, account: GiteaAccount, db: Session):
         self.instance = instance
         self.account = account
-        self.client = GiteaClient(instance.url, account.access_token)
+        self.client = GiteaClient(
+            instance.url, 
+            account.access_token, 
+            account_id=account.id, 
+            db_session=db
+        )
         # Use the account's Gitea username as the bot username
         self.bot_username = account.gitea_username
 
