@@ -20,8 +20,8 @@ class SystemConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
     # Host URL for callback addresses
     host_url = Column(String, nullable=True)  # e.g. https://your-domain.com
-    # Webhook signing key for authorization
-    webhook_signing_key = Column(String, nullable=True)  # HMAC secret for webhook auth
+    # Webhook signing key for authorization (legacy)
+    webhook_signing_key = Column(String, nullable=True)
     # LLM config
     llm_base_url = Column(String, nullable=True, default="https://api.openai.com/v1")
     llm_api_key = Column(String, nullable=True)
@@ -32,6 +32,8 @@ class SystemConfig(Base):
     # AI token limits
     ai_max_tokens = Column(Integer, nullable=True, default=8000)  # Max tokens per AI call
     ai_context_limit = Column(Integer, nullable=True, default=50000)  # Max total context tokens
+    # Polling config
+    notification_poll_interval = Column(Integer, nullable=True, default=1)  # Interval in minutes
 
 
 class GiteaInstance(Base):
@@ -55,9 +57,11 @@ class GiteaAccount(Base):
     access_token = Column(String, nullable=False)
     refresh_token = Column(String, nullable=True)
     token_expires_at = Column(DateTime, nullable=True)
-    # User-level webhook
+    # User-level webhook (legacy)
     webhook_id = Column(Integer, nullable=True)
     webhook_secret = Column(String, nullable=True)
+    # Polling state
+    last_notified_at = Column(DateTime, nullable=True)
 
     instance = relationship("GiteaInstance", back_populates="accounts")
 
@@ -91,3 +95,11 @@ class AuditLog(Base):
     ip_address = Column(String, nullable=True)  # Client IP address
     status = Column(String, nullable=False)  # "SUCCESS" or "FAILURE"
     details = Column(String, nullable=True)  # Additional details (JSON string)
+
+
+class Migration(Base):
+    __tablename__ = "migrations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    version = Column(Integer, nullable=False)
+    applied_at = Column(DateTime, default=datetime.utcnow)

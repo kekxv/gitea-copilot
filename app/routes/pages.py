@@ -233,8 +233,7 @@ async def admin_dashboard(request: Request, db: Session = Depends(get_db)):
             "id": account.id,
             "gitea_username": account.gitea_username,
             "instance_url": instance.url if instance else "Unknown",
-            "instance_id": instance.id if instance else 0,
-            "webhook_id": account.webhook_id
+            "instance_id": instance.id if instance else 0
         })
 
     # Construct callback URL - use configured host_url or fallback to request
@@ -249,7 +248,6 @@ async def admin_dashboard(request: Request, db: Session = Depends(get_db)):
         else:
             base_url = f"{scheme}://{host}"
     callback_url = base_url + "/oauth/callback"
-    webhook_url = base_url + "/webhook/gitea"
 
     return render(request, "admin/dashboard.html", {
         "admin_username": admin.username,
@@ -259,7 +257,6 @@ async def admin_dashboard(request: Request, db: Session = Depends(get_db)):
         "instances": instance_data,
         "accounts": account_data,
         "callback_url": callback_url,
-        "webhook_url": webhook_url,
         "bot_username": accounts[0].gitea_username if accounts else "your-account"
     })
 
@@ -397,7 +394,6 @@ async def admin_totp_disable(
 async def admin_config_update(
     request: Request,
     host_url: str = Form(default=""),
-    webhook_signing_key: str = Form(default=""),
     llm_base_url: str = Form(default="https://api.openai.com/v1"),
     llm_api_key: str = Form(default=""),
     llm_model: str = Form(default="gpt-4o-mini"),
@@ -405,8 +401,8 @@ async def admin_config_update(
     copilot_docs_size_limit: int = Form(default=25),
     ai_max_tokens: int = Form(default=8000),
     ai_context_limit: int = Form(default=50000),
+    notification_poll_interval: int = Form(default=1),
     clear_api_key: str = Form(default=""),
-    generate_new_signing_key: str = Form(default=""),
     db: Session = Depends(get_db)
 ):
     admin = get_admin_from_token(request, db)
@@ -418,13 +414,6 @@ async def admin_config_update(
     # Host URL for callback
     config.host_url = host_url.strip() if host_url.strip() else None
 
-    # Webhook signing key
-    if generate_new_signing_key:
-        from ..gitea import generate_signing_key
-        config.webhook_signing_key = generate_signing_key()
-    elif webhook_signing_key.strip():
-        config.webhook_signing_key = webhook_signing_key.strip()
-
     # LLM config
     config.llm_base_url = llm_base_url
     config.llm_model = llm_model
@@ -432,6 +421,7 @@ async def admin_config_update(
     config.copilot_docs_size_limit = copilot_docs_size_limit
     config.ai_max_tokens = ai_max_tokens
     config.ai_context_limit = ai_context_limit
+    config.notification_poll_interval = notification_poll_interval
 
     # Handle API key: clear if requested, update if provided
     if clear_api_key:
@@ -505,16 +495,6 @@ async def delete_account(
 
     account = db.query(GiteaAccount).filter(GiteaAccount.id == account_id).first()
     if account:
-        # Delete user webhook from Gitea if exists
-        if account.webhook_id:
-            try:
-                from ..gitea import GiteaClient
-                instance = account.instance
-                client = GiteaClient(instance.url, account.access_token)
-                await client.delete_user_hook(account.webhook_id)
-            except Exception as e:
-                logging.warning(f"Failed to delete user webhook: {e}")
-
         db.delete(account)
         db.commit()
     return {"message": "Account deleted"}
@@ -565,7 +545,7 @@ async def oauth_callback(
     db: Session = Depends(get_db)
 ):
     from ..auth import gitea as gitea_auth
-    from ..gitea import GiteaClient, generate_webhook_secret, encode_user_context
+    from ..gitea import GiteaClient
 
     # OAuth callback doesn't require admin login - the state validates the request
     state_data = gitea_auth.validate_oauth_state(state, db)
@@ -619,32 +599,10 @@ async def oauth_callback(
             expires_in
         )
 
-        # Create user-level webhook (receives events from all repos)
-        client = GiteaClient(instance.url, access_token)
-        webhook_url = base_url + "/webhook/gitea"
-
-        # Get signing key for webhook auth
-        signing_key = config.webhook_signing_key or "default-signing-key"
-        auth_header = encode_user_context(instance.id, account.id, signing_key)
-
-        webhook_created = False
-        if not account.webhook_id:
-            try:
-                secret = generate_webhook_secret()
-                webhook = await client.create_user_hook(webhook_url, secret, auth_header)
-                account.webhook_id = webhook.get("id")
-                account.webhook_secret = secret
-                db.commit()
-                webhook_created = True
-            except Exception as e:
-                logging.error(f"Failed to create user webhook: {e}")
-
         return render(request, "admin/oauth_result.html", {
             "success": True,
             "gitea_username": gitea_user["login"],
             "account_id": account.id,
-            "webhook_created": webhook_created,
-            "webhook_exists": account.webhook_id is not None,
             "is_admin": request.cookies.get("admin_token") is not None
         })
 

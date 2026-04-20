@@ -4,6 +4,7 @@ from ..database import SessionLocal
 from ..models import GiteaAccount, GiteaInstance
 from datetime import datetime, timedelta
 import logging
+from .notification_poller import run_polling_task
 
 logger = logging.getLogger(__name__)
 
@@ -87,13 +88,18 @@ def check_and_refresh_tokens():
 
 
 def start_scheduler():
-    """Start the APScheduler for token refresh."""
+    """Start the APScheduler for token refresh and notification polling."""
     from apscheduler.schedulers.background import BackgroundScheduler
 
     scheduler = BackgroundScheduler()
-    # Run every 5 minutes
+    
+    # Token refresh every 5 minutes
     scheduler.add_job(check_and_refresh_tokens, 'interval', minutes=5)
+    
+    # Notification polling every 1 minute
+    scheduler.add_job(run_polling_task, 'interval', minutes=1)
+    
     scheduler.start()
-    logger.info("Token refresh scheduler started")
+    logger.info("Background scheduler started (Token Refresh + Notification Polling)")
 
     return scheduler

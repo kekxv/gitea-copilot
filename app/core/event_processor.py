@@ -8,8 +8,8 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
-class WebhookProcessor:
-    """Process webhook events and trigger AI skills."""
+class EventProcessor:
+    """Process Gitea events and trigger AI skills."""
 
     def __init__(self, instance: GiteaInstance, account: GiteaAccount, db: Session):
         self.instance = instance

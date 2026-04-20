@@ -1,6 +1,6 @@
 import pytest
 import httpx
-from app.gitea.client import GiteaClient, verify_hmac_signature, encode_user_context, decode_user_context
+from app.gitea.client import GiteaClient
 from app.models import GiteaAccount, GiteaInstance
 from datetime import datetime, timedelta
 
@@ -66,34 +66,3 @@ async def test_gitea_client_token_refresh(db_session, mocker):
     db_session.refresh(account)
     assert account.access_token == "new-token"
     assert client.access_token == "new-token"
-
-def test_verify_hmac_signature():
-    payload = b'{"action": "created"}'
-    secret = "my-secret"
-    import hmac, hashlib
-    expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-    
-    assert verify_hmac_signature(payload, expected, secret) is True
-    assert verify_hmac_signature(payload, "wrong-sig", secret) is False
-
-def test_user_context_encoding():
-    instance_id, account_id = 1, 2
-    signing_key = "test-signing-key-123"
-
-    encoded = encode_user_context(instance_id, account_id, signing_key)
-    decoded_i, decoded_a = decode_user_context(encoded, signing_key)
-
-    assert decoded_i == instance_id
-    assert decoded_a == account_id
-
-    # Check encoded length (should be about 56 chars for 40 bytes base64url)
-    assert len(encoded) < 60  # Much shorter than JSON format (~140 chars)
-
-    # Test with wrong key should fail
-    decoded_wrong = decode_user_context(encoded, "wrong-key")
-    assert decoded_wrong == (0, 0)
-
-    # Test with corrupted payload should fail
-    corrupted = encoded[:-5] + "XXXXX"
-    decoded_corrupted = decode_user_context(corrupted, signing_key)
-    assert decoded_corrupted == (0, 0)

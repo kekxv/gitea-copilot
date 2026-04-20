@@ -15,11 +15,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from .database import engine, Base
+from .database import engine, Base, SessionLocal
 from .routes import admin, pages
-from .webhooks import router as webhook_router
 from .tasks import start_scheduler
 from .utils.security import get_or_create_secret_key, validate_secret_key
+from .database_migration import apply_migrations
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,14 @@ async def lifespan(app: FastAPI):
     """Manage application lifespan - startup and shutdown."""
     # Startup
     Base.metadata.create_all(bind=engine)
+
+    # Run database migrations
+    with SessionLocal() as db:
+        try:
+            apply_migrations(db)
+        except Exception as e:
+            logger.error(f"Critical: Database migration failed: {e}")
+            # In production you might want to exit here
     
     # Initialize and validate SECRET_KEY for JWT
     get_or_create_secret_key()
@@ -56,7 +64,6 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(pages.router, tags=["Pages"])
 # API routers
 app.include_router(admin.router, prefix="/admin", tags=["Admin"])
-app.include_router(webhook_router, prefix="/webhook", tags=["Webhook"])
 
 
 @app.get("/api")

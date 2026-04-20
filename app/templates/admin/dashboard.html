@@ -94,11 +94,7 @@
                             <strong>@{{ account.gitea_username }}</strong>
                             <span class="text-muted" style="margin-left: 0.5rem; font-size: 0.8rem;">{{ account.instance_url }}</span>
                             <div class="mt-1">
-                                {% if account.webhook_id %}
-                                <span class="status-pill active"><span class="dot"></span> Webhook</span>
-                                {% else %}
-                                <span class="status-pill error"><span class="dot"></span> 缺失</span>
-                                {% endif %}
+                                <span class="status-pill active"><span class="dot"></span> 监听中</span>
                             </div>
                         </div>
                         <button class="btn btn-outline btn-sm" onclick="deleteItem('/admin/accounts/{{ account.id }}', () => location.reload())">解绑</button>
@@ -133,16 +129,12 @@
                     <div class="form-group">
                         <label>系统 Host 地址</label>
                         <input type="url" name="host_url" value="{{ config.host_url or '' }}" placeholder="https://your-domain.com">
-                        <small class="form-hint">用于生成 OAuth 回调地址和 Webhook URL，不填则使用当前请求地址</small>
+                        <small class="form-hint">用于生成 OAuth 回调地址，不填则使用当前请求地址</small>
                     </div>
                     <div class="form-group">
-                        <label>Webhook 签名密钥</label>
-                        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-                            <input type="password" name="webhook_signing_key" value="{{ config.webhook_signing_key or '' }}" placeholder="留空保持现有">
-                            {% if config.webhook_signing_key %}<span class="badge badge-success">已配置</span>{% endif %}
-                            <button type="submit" name="generate_new_signing_key" value="1" class="btn btn-sm btn-secondary">生成新密钥</button>
-                        </div>
-                        <small class="form-hint">用于验证 Webhook 授权签名，防止伪造请求</small>
+                        <label>消息轮询间隔 (分钟)</label>
+                        <input type="number" name="notification_poll_interval" value="{{ config.notification_poll_interval or 1 }}" min="1" max="60">
+                        <small class="form-hint">检查新消息的时间间隔，默认 1 分钟</small>
                     </div>
                     <hr>
                     <div class="grid grid-2">
@@ -190,18 +182,11 @@
                 <h3>添加实例</h3>
             </div>
             <div class="card-body">
-                <div class="callback-box">
+                <div class="callback-box" style="margin-bottom: 1rem;">
                     <label>回调地址 (OAuth)</label>
                     <div class="callback-url-wrap">
                         <code class="callback-url">{{ callback_url }}</code>
                         <button class="btn btn-sm btn-secondary" onclick="copyToClipboard('{{ callback_url }}')">复制</button>
-                    </div>
-                </div>
-                <div class="callback-box" style="margin-bottom: 1rem;">
-                    <label>Webhook 地址</label>
-                    <div class="callback-url-wrap">
-                        <code class="callback-url">{{ webhook_url }}</code>
-                        <button class="btn btn-sm btn-secondary" onclick="copyToClipboard('{{ webhook_url }}')">复制</button>
                     </div>
                 </div>
                 <form action="/admin/instances" method="post" class="mt-2">

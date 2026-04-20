@@ -387,7 +387,7 @@ class GiteaClient(BaseGitClient):
         url = f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews"
         return await self._request("POST", url, data=data)
 
-    async def create_pull_request_comment(
+    async def get_pull_request_comment(
         self,
         owner: str,
         repo: str,
@@ -414,153 +414,33 @@ class GiteaClient(BaseGitClient):
             data=data
         )
 
-    # ============ User Webhook Operations ============
+    # ============ Notification Operations ============
 
-    async def list_user_hooks(self) -> List[Dict]:
-        """List webhooks for the authenticated user."""
-        return await self._request("GET", "/user/hooks")
-
-    async def create_user_hook(
+    async def get_notifications(
         self,
-        webhook_url: str,
-        secret: str,
-        custom_header_value: str,
-        events: List[str] = ["issue_comment", "issues", "pull_request"]
-    ) -> Dict:
-        """Create a webhook for the authenticated user.
-
-        This webhook will receive events from all repositories the user has access to.
-        """
-        data = {
-            "type": "gitea",
-            "name": "GiteaCopilot",
-            "config": {
-                "url": webhook_url,
-                "content_type": "json",
-                "secret": secret,
-            },
-            "events": events,
-            "active": True,
-            "authorization_header": f"Basic {custom_header_value}"
+        all_notifications: bool = False,
+        since: Optional[datetime] = None,
+        limit: int = 50
+    ) -> List[Dict]:
+        """Fetch notifications for the authenticated user."""
+        params = {
+            "all": "true" if all_notifications else "false",
+            "limit": limit
         }
+        if since:
+            # Gitea expects ISO 8601 format
+            params["since"] = since.isoformat()
 
-        return await self._request("POST", "/user/hooks", data=data)
+        return await self._request("GET", "/user/notifications", params=params)
 
-    async def delete_user_hook(self, hook_id: int) -> bool:
-        """Delete a user webhook."""
-        url = f"{self.base_url}/api/v1/user/hooks/{hook_id}"
+    async def mark_notification_as_read(self, notification_id: int) -> bool:
+        """Mark a notification as read."""
+        try:
+            await self._request("PATCH", f"/user/notifications/{notification_id}")
+            return True
+        except Exception:
+            return False
 
-        async with httpx.AsyncClient() as client:
-            response = await client.request(
-                "DELETE",
-                url,
-                headers=self._headers()
-            )
-
-            return response.status_code == 204
-
-
-def generate_webhook_secret() -> str:
-    """Generate a random webhook secret."""
-    import secrets
-    return secrets.token_urlsafe(32)
-
-
-def generate_signing_key() -> str:
-    """Generate a random signing key for webhook auth."""
-    import secrets
-    return secrets.token_urlsafe(32)
-
-
-def encode_user_context(instance_id: int, account_id: int, signing_key: str) -> str:
-    """Encode user context as binary with HMAC signature, then base64url.
-
-    Binary format (40 bytes total):
-    - instance_id: 4 bytes (uint32, big-endian)
-    - account_id: 4 bytes (uint32, big-endian)
-    - signature: 32 bytes (HMAC-SHA256 of the 8-byte message)
-
-    Base64url encoded result is about 56 characters.
-    No timestamp - webhook auth header is set once and used indefinitely.
-    """
-    import struct
-
-    # Pack message (8 bytes)
-    message = struct.pack('>II', instance_id, account_id)
-
-    # Calculate HMAC-SHA256 signature (32 bytes)
-    signature = hmac.new(
-        signing_key.encode(),
-        message,
-        hashlib.sha256
-    ).digest()
-
-    # Combine message + signature (40 bytes)
-    payload = message + signature
-
-    # Base64url encode without padding
-    return base64.urlsafe_b64encode(payload).rstrip(b'=').decode()
-
-
-def decode_user_context(encoded: str, signing_key: str) -> tuple[int, int]:
-    """Decode user context from base64url binary and validate signature.
-
-    Returns (instance_id, account_id) or (0, 0) if invalid.
-
-    Validates:
-    - Payload length (40 bytes)
-    - HMAC signature
-    """
-    import struct
-    try:
-        # Add padding if needed (base64url without padding)
-        padding = 4 - len(encoded) % 4
-        if padding != 4:
-            encoded += '=' * padding
-
-        # Decode base64url
-        payload = base64.urlsafe_b64decode(encoded)
-
-        # Validate length (40 bytes: 8 message + 32 signature)
-        if len(payload) != 40:
-            logger.warning(f"Invalid payload length: {len(payload)}")
-            return 0, 0
-
-        # Split message and signature
-        message = payload[:8]
-        signature = payload[8:]
-
-        # Verify signature
-        expected_sig = hmac.new(
-            signing_key.encode(),
-            message,
-            hashlib.sha256
-        ).digest()
-
-        if not hmac.compare_digest(signature, expected_sig):
-            logger.warning("Invalid signature")
-            return 0, 0
-
-        # Unpack fields
-        instance_id, account_id = struct.unpack('>II', message)
-
-        return int(instance_id), int(account_id)
-
-    except Exception as e:
-        logger.warning(f"Failed to decode user context: {e}")
-        return 0, 0
-
-
-def verify_hmac_signature(
-    payload: bytes,
-    signature: str,
-    secret: str
-) -> bool:
-    """Verify HMAC-SHA256 signature of webhook payload."""
-    expected = hmac.new(
-        secret.encode(),
-        payload,
-        hashlib.sha256
-    ).hexdigest()
-
-    return hmac.compare_digest(signature, expected)
+    async def get_comment_by_id(self, owner: str, repo: str, comment_id: int) -> Dict:
+        """Get an issue/PR comment by its ID."""
+        return await self._request("GET", f"/repos/{owner}/{repo}/issues/comments/{comment_id}")
