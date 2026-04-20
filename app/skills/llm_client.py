@@ -81,11 +81,16 @@ class LLMClient:
                     model=self.model,
                     messages=messages,
                     tools=tools,
-                    tool_choice="auto",
+                    tool_choice="required",  # Force AI to call at least one tool
                     max_tokens=max_tokens
                 )
 
                 message = response.choices[0].message
+
+                # Log AI response details
+                logger.debug(f"📊 AI response: tool_calls={len(message.tool_calls or [])}, content_len={len(message.content or '')}")
+                if message.content:
+                    logger.debug(f"   Content preview: {message.content[:200]}...")
 
                 # Check if AI wants to call tools
                 if message.tool_calls:
@@ -112,8 +117,10 @@ class LLMClient:
                         import json
                         try:
                             arguments = json.loads(tool_call.function.arguments)
-                            logger.info(f"Tool call: {tool_name} with args: {arguments}")
-                            
+                            # Detailed tool call logging
+                            logger.debug(f"🔧 Tool call: {tool_name}")
+                            logger.debug(f"   Arguments: {json.dumps(arguments, ensure_ascii=False, indent=2)}")
+
                             # Execute tool callback
                             if on_tool_call:
                                 result = await on_tool_call(tool_name, arguments)
@@ -126,7 +133,7 @@ class LLMClient:
                             logger.error(f"Error handling tool call {tool_name}: {e}")
                             result = {"error": str(e)}
 
-                        logger.debug(f"Tool result: {result}")
+                        logger.debug(f"   Result: {json.dumps(result, ensure_ascii=False) if isinstance(result, dict) else str(result)}")
 
                         # Add tool result to messages
                         messages.append({

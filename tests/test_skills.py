@@ -60,8 +60,8 @@ async def test_review_skill_lgtm(mocker):
     
     async def side_effect(*args, **kwargs):
         on_tool_call = kwargs.get("on_tool_call")
-        # Pass empty comments and a safe summary
-        await on_tool_call("submit_review", {"comments": [], "summary": "Great code!"})
+        # AI must pass "LGTM" as summary explicitly
+        await on_tool_call("submit_review", {"comments": [], "summary": "LGTM"})
         return "Success", [] # Return value MUST NOT contain "AI 调用出错"
         
     mock_llm.generate_with_tools.side_effect = side_effect

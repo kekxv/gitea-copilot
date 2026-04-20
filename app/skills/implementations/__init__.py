@@ -279,7 +279,8 @@ class ReviewSkill(BaseSkill):
                             try: raw_c = json.loads(raw_c)
                             except: pass
                         if isinstance(raw_c, dict): raw_c = [raw_c]
-                        
+
+                        logger.debug(f"📝 submit_review called with {len(raw_c or [])} comments")
                         for c in (raw_c or []):
                             path, body = c.get("path"), c.get("body")
                             if not path or not body: continue
@@ -287,21 +288,29 @@ class ReviewSkill(BaseSkill):
                             ol = c.get("old_position") or c.get("old_line")
                             nl = int(nl) if nl is not None else None
                             ol = int(ol) if ol is not None else None
-                            
+
                             if path in valid_lines:
-                                if nl and nl in valid_lines[path]["new"]: 
+                                if nl and nl in valid_lines[path]["new"]:
                                     all_comments.append({"path": path, "new_position": nl, "old_position": None, "body": body})
-                                elif ol and ol in valid_lines[path]["old"]: 
+                                    logger.debug(f"   ✓ Comment on {path}:{nl} (new)")
+                                elif ol and ol in valid_lines[path]["old"]:
                                     all_comments.append({"path": path, "new_position": None, "old_position": ol, "body": body})
+                                    logger.debug(f"   ✓ Comment on {path}:{ol} (old)")
                                 else:
                                     all_summaries.append(f"**[{path}] 补充记录**: {body}")
-                        
-                        if args.get("summary"): all_summaries.append(args["summary"])
+                                    logger.debug(f"   ⚠ Comment on {path} added to summary (line not in valid range)")
+
+                        if args.get("summary"):
+                            all_summaries.append(args["summary"])
+                            logger.debug(f"   Summary: {args['summary'][:100]}...")
                         return {"success": True, "__break__": True}
                     return {"error": "Unknown tool"}
 
                 prompt = f"审查 PR #{pr_number} (第 {i+1}/{len(chunks)} 部分)\n标题: {pr_title}\n\n{diff_context}"
-                res, _ = await self.llm.generate_with_tools(prompt, get_review_system_prompt(), REVIEW_TOOLS, on_tool_call=handle_tool_call)
+                logger.debug(f"🔍 Processing chunk {i+1}/{len(chunks)} with {len(chunk)} files: {[f['path'] for f in chunk]}")
+                system_prompt = get_review_system_prompt(len(chunks))
+                res, _ = await self.llm.generate_with_tools(prompt, system_prompt, REVIEW_TOOLS, on_tool_call=handle_tool_call)
+                logger.debug(f"✅ Chunk {i+1}/{len(chunks)} completed, collected {len(all_comments)} comments so far")
                 if "AI 调用出错" in res:
                     raise Exception(f"AI 服务响应异常: {res}")
                 successfully_processed_chunks += 1
@@ -310,18 +319,19 @@ class ReviewSkill(BaseSkill):
             if successfully_processed_chunks == 0:
                 raise Exception("无法从 AI 获取有效的审查结果。")
 
+            # Check if AI actually called submit_review with summary
+            if not all_summaries:
+                raise Exception("AI 审核服务异常，请手动审核或重新提交审核请求。")
+
             unique_comments = []
             seen_keys = set()
             for c in all_comments:
                 key = (c["path"], c["new_position"], c["old_position"], c["body"].strip())
                 if key not in seen_keys: unique_comments.append(c); seen_keys.add(key)
 
-            # Structured Report
+            # Use AI's summary directly, no auto LGTM
             summary_text = "\n\n".join(list(dict.fromkeys(all_summaries)))
-            
-            # Handle LGTM
-            has_issues = len(unique_comments) > 0 or any(kw in summary_text for kw in ["❌", "发现风险", "存在缺陷", "隐患", "建议修改"])
-            final_body = "LGTM" if not has_issues else scrub(summary_text)
+            final_body = scrub(summary_text)
 
             # 6. Submit Unified Review
             api_comments = []
@@ -344,7 +354,7 @@ class ReviewSkill(BaseSkill):
         except Exception as e:
             logger.error(f"Review failed: {e}", exc_info=True)
             quoted = f"> {scrub(original_comment_body)}\n\n"
-            return f"{quoted}❌ **代码审查失败**\n\n**原因**: {scrub(str(e))}"
+            return f"{quoted}❌ **代码审核失败**\n\n{scrub(str(e))}"
 
     def _parse_diff(self, diff_text: str) -> List[Dict[str, Any]]:
         """Parse diff to get file changes with line numbers."""
