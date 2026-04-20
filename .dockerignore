@@ -1,0 +1,45 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Claude
+.claude/
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Development files
+.env
+.env.example
+assets/
+tests/
+*.db
+.python-version
+
+# Build artifacts
+dist/
+build/
+*.egg-info/

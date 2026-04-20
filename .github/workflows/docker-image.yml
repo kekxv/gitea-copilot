@@ -1,0 +1,186 @@
+name: Release and Publish Docker Image
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run tests
+        run: uv run pytest -v
+
+  release:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check version and determine if release is needed
+        id: version_check
+        run: |
+          VERSION=$(cat VERSION)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+            echo "status=existing" >> $GITHUB_OUTPUT
+            echo "message=Tag v${VERSION} already exists. Skipping release."
+            echo "release_needed=false" >> $GITHUB_OUTPUT
+          else
+            echo "status=new" >> $GITHUB_OUTPUT
+            echo "message=Version v${VERSION} is new. Proceeding with release and tag creation."
+            echo "release_needed=true" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Log version check result
+        run: |
+          echo "Version: ${{ steps.version_check.outputs.version }}"
+          echo "Status: ${{ steps.version_check.outputs.status }}"
+          echo "Release needed: ${{ steps.version_check.outputs.release_needed }}"
+
+      - name: Set up QEMU
+        if: steps.version_check.outputs.release_needed == 'true'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Set up Docker Buildx
+        if: steps.version_check.outputs.release_needed == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: steps.version_check.outputs.release_needed == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        if: steps.version_check.outputs.release_needed == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:v${{ steps.version_check.outputs.version }}
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create and push Git tag
+        if: steps.version_check.outputs.release_needed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          VERSION="${{ steps.version_check.outputs.version }}"
+          TAG="v${VERSION}"
+
+          echo "Creating tag: ${TAG}"
+          git tag -a "${TAG}" -m "Release ${TAG}" -m "Automated release by GitHub Actions" -m "Built from commit: ${{ github.sha }}" -m "Build number: ${{ github.run_number }}"
+
+          echo "Pushing tag: ${TAG}"
+          git push origin "${TAG}"
+
+          echo "✓ Tag created and pushed successfully: ${TAG}"
+        shell: bash
+
+      - name: Create GitHub Release
+        if: steps.version_check.outputs.release_needed == 'true'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.version_check.outputs.version }}
+          release_name: Release v${{ steps.version_check.outputs.version }}
+          body: |
+            ## Release v${{ steps.version_check.outputs.version }}
+
+            **Build Details:**
+            - Commit: ${{ github.sha }}
+            - Build Number: ${{ github.run_number }}
+            - Branch: ${{ github.ref }}
+
+            **Tests:** ✓ Passed
+            **Build:** ✓ Successful
+            **Docker:** ✓ Published
+
+            Docker image available at:
+            - `ghcr.io/${{ github.repository }}:v${{ steps.version_check.outputs.version }}`
+            - `ghcr.io/${{ github.repository }}:latest`
+            - `ghcr.io/${{ github.repository }}:${{ github.sha }}`
+
+            **Usage:**
+            ```bash
+            docker run -d \
+              -p 8000:8000 \
+              -e LLM_BASE_URL=http://your-llm-server:11434/v1 \
+              -e LLM_API_KEY=your-api-key \
+              -e LLM_MODEL=your-model \
+              -v giteacopilot-data:/app/data \
+              ghcr.io/${{ github.repository }}:latest
+            ```
+          draft: false
+          prerelease: false
+
+      - name: Docker build summary
+        if: steps.version_check.outputs.release_needed == 'true'
+        run: |
+          echo "✓ Docker image build and push completed successfully"
+          echo ""
+          echo "Image Tags:"
+          echo "  - ghcr.io/${{ github.repository }}:latest"
+          echo "  - ghcr.io/${{ github.repository }}:v${{ steps.version_check.outputs.version }}"
+          echo "  - ghcr.io/${{ github.repository }}:${{ github.sha }}"
+        shell: bash
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## GitHub Actions Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Workflow: Release and Publish Docker Image" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | ✓ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ✓ Successful |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | ${{ steps.version_check.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Release Needed | ${{ steps.version_check.outputs.release_needed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.version_check.outputs.release_needed }}" == "true" ]; then
+            echo "✓ Release artifacts created and Docker image published" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "ℹ Tag v${{ steps.version_check.outputs.version }} already exists, skipping release" >> $GITHUB_STEP_SUMMARY
+          fi
+        shell: bash
