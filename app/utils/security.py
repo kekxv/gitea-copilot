@@ -5,7 +5,7 @@ import secrets
 import logging
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 # Default insecure key - NEVER use this in production
 DEFAULT_INSECURE_KEY = "super-secret-key"

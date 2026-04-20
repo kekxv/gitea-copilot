@@ -5,7 +5,7 @@ from ..gitea import GiteaClient
 from ..skills import SkillRouter
 from typing import Dict, Any
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 class EventProcessor:
@@ -82,9 +82,15 @@ class EventProcessor:
         # Check sender's repository access permission (need write/admin)
         owner, repo = owner_repo.split("/", 1)
         if sender:
-            logger.debug(f"Checking write/admin permission for user '{sender}' on {owner}/{repo}")
-            has_access = await self.client.check_user_repo_access(owner, repo, sender)
-            logger.debug(f"Permission check result: has_access={has_access}")
+            # Owner always has access
+            if sender == owner:
+                logger.info(f"User '{sender}' is the repository owner, granting access")
+                has_access = True
+            else:
+                logger.debug(f"Checking write/admin permission for user '{sender}' on {owner}/{repo}")
+                has_access = await self.client.check_user_repo_access(owner, repo, sender)
+                logger.debug(f"Permission check result: has_access={has_access}")
+            
             if not has_access:
                 logger.warning(f"User {sender} lacks write/admin permission for {owner}/{repo}, skipping")
                 return

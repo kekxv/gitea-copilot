@@ -4,7 +4,7 @@ from ..gitea import GiteaClient
 from ..models import SystemConfig
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 class SkillRouter:

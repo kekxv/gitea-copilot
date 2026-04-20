@@ -21,8 +21,13 @@ async def test_gitea_client_request(mocker):
 
 @pytest.mark.asyncio
 async def test_gitea_client_token_refresh(db_session, mocker):
+    from app.utils.encryption import encrypt_sensitive_value
     # Setup data
-    instance = GiteaInstance(url="http://gitea.local", client_id="cid", client_secret_encrypted="csec")
+    instance = GiteaInstance(
+        url="http://gitea.local", 
+        client_id="cid", 
+        client_secret_encrypted=encrypt_sensitive_value("csec")
+    )
     db_session.add(instance)
     db_session.commit()
     

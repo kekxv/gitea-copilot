@@ -4,7 +4,7 @@ sqlalchemy
 apscheduler
 python-multipart
 pyotp
-passlib[bcrypt]
+bcrypt
 python-dotenv
 jinja2
 python-jose[cryptography]

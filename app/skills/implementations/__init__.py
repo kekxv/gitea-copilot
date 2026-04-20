@@ -6,7 +6,7 @@ import logging
 import re
 import json
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 class BaseSkill(ABC):

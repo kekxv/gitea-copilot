@@ -1447,3 +1447,231 @@ hr.mb-2 {
         width: 100%;
     }
 }
+
+/* ============================================
+   Modal 弹窗
+   ============================================ */
+
+.modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 200;
+    backdrop-filter: blur(4px);
+}
+
+.modal-overlay.open {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.modal {
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    max-width: 480px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+}
+
+.modal-header {
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.25rem;
+    line-height: 1;
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: var(--text);
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+
+/* ============================================
+   实例卡片 - 小卡片样式
+   ============================================ */
+
+.instance-cards {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+}
+
+@media (min-width: 640px) {
+    .instance-cards {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (min-width: 1024px) {
+    .instance-cards {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+.instance-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    padding: 1.25rem;
+    transition: all 0.2s;
+    position: relative;
+}
+
+.instance-card:hover {
+    border-color: var(--primary-light);
+    box-shadow: var(--shadow);
+}
+
+.instance-card .instance-url {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 0.5rem;
+    word-break: break-all;
+}
+
+.instance-card .instance-accounts {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
+}
+
+.instance-card .instance-accounts strong {
+    color: var(--primary);
+}
+
+.instance-card .instance-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.instance-card .instance-mode-badge {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+}
+
+/* 添加实例卡片 - 特殊样式 */
+.add-instance-card {
+    background: var(--gradient-light);
+    border: 2px dashed var(--primary-light);
+    padding: 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.add-instance-card:hover {
+    border-color: var(--primary);
+    background: var(--info-bg);
+}
+
+.add-instance-card .add-icon {
+    font-size: 2rem;
+    color: var(--primary);
+    margin-bottom: 0.5rem;
+}
+
+.add-instance-card .add-text {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+/* ============================================
+   Token 模式提示
+   ============================================ */
+
+.mode-switch {
+    background: var(--bg);
+    border-radius: var(--radius-xs);
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.mode-switch label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+}
+
+.mode-switch input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary);
+}
+
+.mode-switch-text {
+    flex: 1;
+}
+
+.mode-switch-text strong {
+    font-size: 0.9rem;
+    color: var(--text);
+    display: block;
+}
+
+.mode-switch-text small {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* Badge info */
+.badge-info {
+    background: var(--info-bg);
+    color: var(--primary);
+}
+
+/* ============================================
+   消息提示动画
+   ============================================ */
+
+.alert {
+    animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}

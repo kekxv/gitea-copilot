@@ -57,6 +57,8 @@ class GiteaAccount(Base):
     access_token = Column(String, nullable=False)
     refresh_token = Column(String, nullable=True)
     token_expires_at = Column(DateTime, nullable=True)
+    # Auth mode: 'oauth' (OAuth flow) or 'token' (direct token)
+    auth_mode = Column(String, default="oauth")
     # User-level webhook (legacy)
     webhook_id = Column(Integer, nullable=True)
     webhook_secret = Column(String, nullable=True)

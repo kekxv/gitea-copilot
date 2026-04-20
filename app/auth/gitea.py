@@ -8,7 +8,7 @@ from typing import Optional
 import logging
 from ..utils.encryption import decrypt_sensitive_value, encrypt_sensitive_value
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 def create_oauth_state(instance_id: int, redirect_url: str, db: Session) -> str:

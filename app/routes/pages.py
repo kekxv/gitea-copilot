@@ -19,6 +19,7 @@ import logging
 from datetime import datetime, timedelta
 
 router = APIRouter()
+logger = logging.getLogger("uvicorn.error")
 
 def get_secret_key() -> str:
     """Get SECRET_KEY, initializing it if necessary."""
@@ -233,7 +234,8 @@ async def admin_dashboard(request: Request, db: Session = Depends(get_db)):
             "id": account.id,
             "gitea_username": account.gitea_username,
             "instance_url": instance.url if instance else "Unknown",
-            "instance_id": instance.id if instance else 0
+            "instance_id": instance.id if instance else 0,
+            "auth_mode": account.auth_mode or "oauth"
         })
 
     # Construct callback URL - use configured host_url or fallback to request
@@ -446,8 +448,9 @@ async def admin_logout():
 async def create_instance(
     request: Request,
     url: str = Form(...),
-    client_id: str = Form(...),
-    client_secret: str = Form(...),
+    client_id: str = Form(default=""),
+    client_secret: str = Form(default=""),
+    token: str = Form(default=""),
     db: Session = Depends(get_db)
 ):
     admin = get_admin_from_token(request, db)
@@ -455,15 +458,154 @@ async def create_instance(
         return RedirectResponse(url="/admin/login")
 
     from ..utils.encryption import encrypt_sensitive_value
+    import httpx
+
+    # Check if instance already exists for this URL
+    existing = db.query(GiteaInstance).filter(GiteaInstance.url == url.rstrip("/")).first()
+    if existing:
+        return RedirectResponse(url="/admin/dashboard?error=实例已存在", status_code=303)
 
     instance = GiteaInstance(
-        url=url,
+        url=url.rstrip("/"),
         client_id=client_id,
-        client_secret_encrypted=encrypt_sensitive_value(client_secret)
+        client_secret_encrypted=encrypt_sensitive_value(client_secret) if client_secret else ""
     )
     db.add(instance)
     db.commit()
+    db.refresh(instance)
+
+    # If token provided, create token-mode account
+    if token:
+        try:
+            with httpx.Client() as client:
+                response = client.get(
+                    f"{url.rstrip('/')}/api/v1/user",
+                    headers={"Authorization": f"token {token}"}
+                )
+                if response.status_code == 200:
+                    user_info = response.json()
+                    gitea_user_id = str(user_info.get("id", "0"))
+                    gitea_username = user_info.get("login", "unknown")
+
+                    account = GiteaAccount(
+                        instance_id=instance.id,
+                        gitea_user_id=gitea_user_id,
+                        gitea_username=gitea_username,
+                        access_token=token,
+                        auth_mode="token"
+                    )
+                    db.add(account)
+                    db.commit()
+                    return RedirectResponse(url="/admin/dashboard?message=Token模式实例创建成功", status_code=303)
+                else:
+                    return RedirectResponse(url="/admin/dashboard?error=Token验证失败", status_code=303)
+        except Exception as e:
+            return RedirectResponse(url="/admin/dashboard?error=连接失败", status_code=303)
+
     return RedirectResponse(url="/admin/dashboard", status_code=303)
+
+
+@router.get("/admin/instances/{instance_id}/json")
+async def get_instance_json(
+    request: Request,
+    instance_id: int,
+    db: Session = Depends(get_db)
+):
+    admin = get_admin_from_token(request, db)
+    if not admin:
+        return {"error": "未授权"}
+
+    instance = db.query(GiteaInstance).filter(GiteaInstance.id == instance_id).first()
+    if not instance:
+        return {"error": "实例不存在"}
+
+    accounts = db.query(GiteaAccount).filter(GiteaAccount.instance_id == instance.id).all()
+
+    return {
+        "id": instance.id,
+        "url": instance.url,
+        "client_id": instance.client_id,
+        "accounts": [{
+            "id": a.id,
+            "gitea_username": a.gitea_username,
+            "auth_mode": a.auth_mode or "oauth"
+        } for a in accounts]
+    }
+
+
+@router.post("/admin/instances/{instance_id}")
+async def update_instance(
+    request: Request,
+    instance_id: int,
+    db: Session = Depends(get_db)
+):
+    admin = get_admin_from_token(request, db)
+    if not admin:
+        return {"error": "未授权"}
+
+    instance = db.query(GiteaInstance).filter(GiteaInstance.id == instance_id).first()
+    if not instance:
+        return {"error": "实例不存在"}
+
+    # Parse JSON body
+    try:
+        body = await request.json()
+    except:
+        return {"error": "无效的请求数据"}
+
+    url = body.get("url", instance.url)
+    client_id = body.get("client_id", "")
+    client_secret = body.get("client_secret", "")
+    token = body.get("token", "")
+
+    from ..utils.encryption import encrypt_sensitive_value
+    import httpx
+
+    instance.url = url.rstrip("/")
+    instance.client_id = client_id
+    if client_secret:
+        instance.client_secret_encrypted = encrypt_sensitive_value(client_secret)
+    db.commit()
+
+    # If token provided, create/update token-mode account
+    if token:
+        try:
+            with httpx.Client() as client:
+                response = client.get(
+                    f"{url.rstrip('/')}/api/v1/user",
+                    headers={"Authorization": f"token {token}"}
+                )
+                if response.status_code == 200:
+                    user_info = response.json()
+                    gitea_user_id = str(user_info.get("id", "0"))
+                    gitea_username = user_info.get("login", "unknown")
+
+                    existing_account = db.query(GiteaAccount).filter(
+                        GiteaAccount.instance_id == instance.id,
+                        GiteaAccount.auth_mode == "token"
+                    ).first()
+
+                    if existing_account:
+                        existing_account.access_token = token
+                        existing_account.gitea_username = gitea_username
+                        existing_account.gitea_user_id = gitea_user_id
+                    else:
+                        account = GiteaAccount(
+                            instance_id=instance.id,
+                            gitea_user_id=gitea_user_id,
+                            gitea_username=gitea_username,
+                            access_token=token,
+                            auth_mode="token"
+                        )
+                        db.add(account)
+                    db.commit()
+                    return {"message": "实例和账号更新成功"}
+                else:
+                    return {"error": "Token验证失败"}
+        except Exception as e:
+            return {"error": "连接失败"}
+
+    return {"message": "实例更新成功"}
 
 
 @router.delete("/admin/instances/{instance_id}")

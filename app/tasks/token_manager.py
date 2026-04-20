@@ -6,7 +6,9 @@ from datetime import datetime, timedelta
 import logging
 from .notification_poller import run_polling_task
 
-logger = logging.getLogger(__name__)
+from ..utils.encryption import decrypt_sensitive_value
+
+logger = logging.getLogger("uvicorn.error")
 
 
 async def refresh_token(account: GiteaAccount, instance: GiteaInstance) -> bool:
@@ -16,6 +18,9 @@ async def refresh_token(account: GiteaAccount, instance: GiteaInstance) -> bool:
         return False
 
     token_url = f"{instance.url.rstrip('/')}/login/oauth/access_token"
+    
+    # Decrypt client secret before sending to Gitea
+    client_secret = decrypt_sensitive_value(instance.client_secret_encrypted)
 
     try:
         async with httpx.AsyncClient() as client:
@@ -25,7 +30,7 @@ async def refresh_token(account: GiteaAccount, instance: GiteaInstance) -> bool:
                     "grant_type": "refresh_token",
                     "refresh_token": account.refresh_token,
                     "client_id": instance.client_id,
-                    "client_secret": instance.client_secret_encrypted
+                    "client_secret": client_secret
                 },
                 headers={"Accept": "application/json"}
             )

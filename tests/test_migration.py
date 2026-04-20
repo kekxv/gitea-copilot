@@ -38,6 +38,10 @@ def test_apply_migrations_already_applied(test_db, mocker):
     engine, SessionLocal = test_db
     Base.metadata.create_all(bind=engine)
     
+    # Mock MIGRATIONS to only have version 1 for this test
+    import app.database_migration
+    mocker.patch.object(app.database_migration, "MIGRATIONS", [(1, ["SELECT 1"])])
+    
     with SessionLocal() as db:
         # Record version 1 as already applied
         db.add(Migration(version=1))

@@ -3,7 +3,7 @@ from openai import AsyncOpenAI
 from typing import Optional, List, Dict, Any, Callable
 import os
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 class LLMClient:
@@ -15,11 +15,14 @@ class LLMClient:
         api_key: Optional[str] = None,
         model: Optional[str] = None
     ):
-        self.base_url = base_url or os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
-        self.model = model or os.getenv("LLM_MODEL", "gpt-4o-mini")
+        # Support both LLM_* and OPENAI_* environment variables
+        # OPENAI_* variables take precedence if LLM_* not set
+        self.base_url = base_url or os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        self.model = model or os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
         # Handle empty/whitespace-only api_key - use placeholder for APIs that don't require auth
-        raw_key = api_key or os.getenv("LLM_API_KEY", "")
+        # Priority: explicit param > LLM_API_KEY > OPENAI_API_KEY
+        raw_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
         self.api_key = raw_key.strip() if raw_key and raw_key.strip() else "sk-no-key-required"
 
         # Initialize OpenAI client
@@ -198,7 +201,7 @@ class LLMClient:
 def get_llm_client_from_config(db_session=None) -> LLMClient:
     """Get LLM client configured from SystemConfig or environment.
 
-    Priority: SystemConfig > Environment variables
+    Priority: SystemConfig > LLM_* env vars > OPENAI_* env vars > defaults
     """
     base_url = None
     api_key = None
@@ -220,13 +223,14 @@ def get_llm_client_from_config(db_session=None) -> LLMClient:
             logger.warning(f"Failed to get config from DB: {e}")
 
     # Fall back to environment variables if not set
-    env_key = os.getenv("LLM_API_KEY", "")
+    # Priority: LLM_* > OPENAI_*
+    env_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
     if not api_key and env_key.strip():
         api_key = env_key.strip()
     if not base_url:
-        base_url = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
+        base_url = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     if not model:
-        model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        model = os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
     return LLMClient(base_url=base_url, api_key=api_key, model=model)
 

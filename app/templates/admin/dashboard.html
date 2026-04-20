@@ -2,13 +2,6 @@
 {% block title %}管理后台{% endblock %}
 
 {% block layout %}
-{% if error %}
-<div class="alert alert-error" style="margin: 1rem;">{{ error }}</div>
-{% endif %}
-{% if message %}
-<div class="alert alert-success" style="margin: 1rem;">{{ message }}</div>
-{% endif %}
-
 <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
 <button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="菜单">
     <svg viewBox="0 0 24 24" width="20" height="20">
@@ -32,7 +25,7 @@
     </nav>
 </aside>
 
-<main class="dashboard-main">
+<main class="dashboard-main" id="alerts-container">
     <!-- Overview -->
     <div id="tab-overview" class="tab-pane active">
         <div class="dashboard-header">
@@ -53,39 +46,45 @@
                 <div class="stat-label">处理事件</div>
             </div>
         </div>
-        {% if instances %}
-        <div class="card">
-            <div class="card-header">
-                <h3>已配置实例</h3>
-                <span class="text-muted">点击授权绑定 Gitea 账号</span>
-            </div>
-            <div class="card-body">
-                <div class="list">
-                    {% for instance in instances %}
-                    <div class="list-item">
-                        <div class="list-item-info">
-                            <strong>{{ instance.url }}</strong>
-                            {% if instance.accounts %}
-                            <p class="text-muted">已授权: {{ instance.accounts|join(', ') }}</p>
-                            {% else %}
-                            <p class="text-muted">未授权账号</p>
-                            {% endif %}
-                        </div>
-                        <div class="action-group">
-                            <button class="btn btn-primary btn-sm" onclick="startOAuth({{ instance.id }})">授权</button>
-                            <button class="btn btn-outline btn-sm" onclick="deleteItem('/admin/instances/{{ instance.id }}', () => location.reload())">删除</button>
-                        </div>
-                    </div>
-                    {% endfor %}
+
+        <div class="dashboard-header mt-2">
+            <h3>Gitea 实例</h3>
+            <p>管理已配置的 Gitea 实例和账号</p>
+        </div>
+        <div class="instance-cards">
+            {% for instance in instances %}
+            <div class="instance-card">
+                {% if instance.client_id %}
+                <span class="badge badge-info instance-mode-badge">OAuth</span>
+                {% else %}
+                <span class="badge badge-default instance-mode-badge">Token</span>
+                {% endif %}
+                <div class="instance-url">{{ instance.url }}</div>
+                {% if instance.accounts %}
+                <div class="instance-accounts">已授权: <strong>{{ instance.accounts|join(', ') }}</strong></div>
+                {% else %}
+                <div class="instance-accounts">未授权账号</div>
+                {% endif %}
+                <div class="instance-actions">
+                    {% if instance.client_id %}
+                    <button class="btn btn-primary btn-sm" onclick="startOAuth({{ instance.id }})">授权</button>
+                    {% endif %}
+                    <button class="btn btn-outline btn-sm" onclick="openEditModal({{ instance.id }})">编辑</button>
+                    <button class="btn btn-outline btn-sm" onclick="deleteInstance({{ instance.id }})">删除</button>
                 </div>
             </div>
-        </div>
-        {% endif %}
-        {% if accounts %}
-        <div class="card">
-            <div class="card-header">
-                <h3>绑定账号</h3>
+            {% endfor %}
+            <div class="add-instance-card" onclick="switchTab('instances')">
+                <div class="add-icon">+</div>
+                <div class="add-text">添加实例</div>
             </div>
+        </div>
+
+        {% if accounts %}
+        <div class="dashboard-header mt-2">
+            <h3>绑定账号</h3>
+        </div>
+        <div class="card">
             <div class="card-body">
                 <div class="list">
                     {% for account in accounts %}
@@ -94,21 +93,19 @@
                             <strong>@{{ account.gitea_username }}</strong>
                             <span class="text-muted" style="margin-left: 0.5rem; font-size: 0.8rem;">{{ account.instance_url }}</span>
                             <div class="mt-1">
-                                <span class="status-pill active"><span class="dot"></span> 监听中</span>
+                                {% if account.auth_mode == 'token' %}
+                                <span class="status-pill" style="background: #e3f2fd; color: #1976d2;"><span class="dot" style="background: #1976d2;"></span> Token 模式</span>
+                                {% else %}
+                                <span class="status-pill active"><span class="dot"></span> OAuth 模式</span>
+                                {% endif %}
                             </div>
                         </div>
-                        <button class="btn btn-outline btn-sm" onclick="deleteItem('/admin/accounts/{{ account.id }}', () => location.reload())">解绑</button>
+                        {% if account.auth_mode == 'oauth' %}
+                        <button class="btn btn-outline btn-sm" onclick="deleteAccount({{ account.id }})">解绑</button>
+                        {% endif %}
                     </div>
                     {% endfor %}
                 </div>
-            </div>
-        </div>
-        {% endif %}
-        {% if not instances and not accounts %}
-        <div class="card">
-            <div class="card-body text-center">
-                <p class="text-muted">暂无实例和账号，请先在「实例」页面添加 Gitea 实例</p>
-                <a href="#instances" class="btn btn-primary mt-2" onclick="switchTab('instances')">添加实例</a>
             </div>
         </div>
         {% endif %}
@@ -174,31 +171,58 @@
     <!-- Instances -->
     <div id="tab-instances" class="tab-pane">
         <div class="dashboard-header">
-            <h1>实例管理</h1>
-            <p>添加新的 Gitea 实例</p>
+            <h1>添加实例</h1>
+            <p>配置新的 Gitea 实例连接</p>
         </div>
         <div class="card">
-            <div class="card-header">
-                <h3>添加实例</h3>
-            </div>
             <div class="card-body">
-                <div class="callback-box" style="margin-bottom: 1rem;">
-                    <label>回调地址 (OAuth)</label>
+                <div class="callback-box">
+                    <label>OAuth 回调地址</label>
                     <div class="callback-url-wrap">
                         <code class="callback-url">{{ callback_url }}</code>
                         <button class="btn btn-sm btn-secondary" onclick="copyToClipboard('{{ callback_url }}')">复制</button>
                     </div>
+                    <small class="form-hint">使用 OAuth 模式需在 Gitea 创建应用并配置此地址</small>
                 </div>
-                <form action="/admin/instances" method="post" class="mt-2">
+
+                <form action="/admin/instances" method="post">
                     <div class="form-group">
                         <label>Gitea URL</label>
                         <input type="url" name="url" required placeholder="https://gitea.example.com">
                     </div>
-                    <div class="grid grid-2">
-                        <div class="form-group"><label>Client ID</label><input type="text" name="client_id" required></div>
-                        <div class="form-group"><label>Client Secret</label><input type="password" name="client_secret" required></div>
+
+                    <div class="mode-switch">
+                        <label>
+                            <input type="checkbox" id="use_oauth_new" onchange="toggleAuthModeNew()" checked>
+                            <div class="mode-switch-text">
+                                <strong>OAuth 模式</strong>
+                                <small>支持自动刷新 Token，适合团队使用</small>
+                            </div>
+                        </label>
                     </div>
-                    <button type="submit" class="btn btn-primary">注册实例</button>
+
+                    <div id="oauth_fields_new">
+                        <div class="grid grid-2">
+                            <div class="form-group">
+                                <label>Client ID <span class="text-muted">(可选)</span></label>
+                                <input type="text" name="client_id" placeholder="OAuth 应用 ID">
+                            </div>
+                            <div class="form-group">
+                                <label>Client Secret <span class="text-muted">(可选)</span></label>
+                                <input type="password" name="client_secret" placeholder="OAuth 应用密钥">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="token_fields_new" style="display: none;">
+                        <div class="form-group">
+                            <label>Access Token</label>
+                            <input type="password" name="token" placeholder="输入 Token 直接绑定账号">
+                            <small class="form-hint">在 Gitea 设置 → 应用 → 管理访问令牌 中创建</small>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary mt-2">添加实例</button>
                 </form>
             </div>
         </div>
@@ -248,6 +272,65 @@
         </footer>
     </main>
 
+    <!-- Edit Modal -->
+    <div class="modal-overlay" id="edit-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>编辑实例</h3>
+                <button class="modal-close" onclick="closeEditModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-form">
+                    <input type="hidden" name="instance_id" id="edit-instance-id">
+                    <div class="form-group">
+                        <label>Gitea URL</label>
+                        <input type="url" name="url" id="edit-url" required placeholder="https://gitea.example.com">
+                    </div>
+
+                    <div class="mode-switch">
+                        <label>
+                            <input type="checkbox" id="use_oauth_edit" onchange="toggleAuthModeEdit()">
+                            <div class="mode-switch-text">
+                                <strong>OAuth 模式</strong>
+                                <small>支持自动刷新 Token</small>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div id="oauth_fields_edit">
+                        <div class="grid grid-2">
+                            <div class="form-group">
+                                <label>Client ID</label>
+                                <input type="text" name="client_id" id="edit-client-id" placeholder="OAuth 应用 ID">
+                            </div>
+                            <div class="form-group">
+                                <label>Client Secret</label>
+                                <input type="password" name="client_secret" id="edit-client-secret" placeholder="留空保持不变">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="token_fields_edit" style="display: none;">
+                        <div class="form-group">
+                            <label>Access Token</label>
+                            <input type="password" name="token" id="edit-token" placeholder="输入新 Token 更新">
+                            <small class="form-hint">更新 Token 模式账号的访问令牌</small>
+                        </div>
+                    </div>
+
+                    <div id="edit-accounts-info" class="mt-2" style="background: var(--bg); padding: 0.75rem; border-radius: var(--radius-xs); display: none;">
+                        <strong style="font-size: 0.85rem;">已绑定账号</strong>
+                        <div id="edit-accounts-list" style="margin-top: 0.5rem;"></div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeEditModal()">取消</button>
+                <button class="btn btn-primary" onclick="submitEditForm()">保存</button>
+            </div>
+        </div>
+    </div>
+
     <script>
 function switchTab(tabName) {
     document.querySelectorAll('.sidebar-link').forEach(link => {
@@ -262,9 +345,143 @@ function switchTab(tabName) {
         document.getElementById('sidebar-overlay').classList.remove('open');
     }
 }
+
+function toggleAuthModeNew() {
+    const useOAuth = document.getElementById('use_oauth_new').checked;
+    document.getElementById('oauth_fields_new').style.display = useOAuth ? 'block' : 'none';
+    document.getElementById('token_fields_new').style.display = useOAuth ? 'none' : 'block';
+}
+
+function toggleAuthModeEdit() {
+    const useOAuth = document.getElementById('use_oauth_edit').checked;
+    document.getElementById('oauth_fields_edit').style.display = useOAuth ? 'block' : 'none';
+    document.getElementById('token_fields_edit').style.display = useOAuth ? 'none' : 'block';
+}
+
+function openEditModal(instanceId) {
+    fetch(`/admin/instances/${instanceId}/json`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                showMessage('error', data.error);
+                return;
+            }
+            document.getElementById('edit-instance-id').value = instanceId;
+            document.getElementById('edit-url').value = data.url;
+            document.getElementById('edit-client-id').value = data.client_id || '';
+
+            const hasOAuth = data.client_id && data.client_id.trim();
+            document.getElementById('use_oauth_edit').checked = hasOAuth;
+            toggleAuthModeEdit();
+
+            // Show accounts info
+            if (data.accounts && data.accounts.length > 0) {
+                document.getElementById('edit-accounts-info').style.display = 'block';
+                const accountsHtml = data.accounts.map(a => {
+                    const modeBadge = a.auth_mode === 'token'
+                        ? '<span class="badge badge-info">Token</span>'
+                        : '<span class="badge badge-success">OAuth</span>';
+                    return `<div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem;">
+                        <strong>@${a.gitea_username}</strong>
+                        ${modeBadge}
+                        ${a.auth_mode === 'oauth' ? `<button class="btn btn-sm btn-outline" onclick="deleteAccount(${a.id})">解绑</button>` : ''}
+                    </div>`;
+                }).join('');
+                document.getElementById('edit-accounts-list').innerHTML = accountsHtml;
+            } else {
+                document.getElementById('edit-accounts-info').style.display = 'none';
+            }
+
+            document.getElementById('edit-modal').classList.add('open');
+        })
+        .catch(err => showMessage('error', '获取实例信息失败'));
+}
+
+function closeEditModal() {
+    document.getElementById('edit-modal').classList.remove('open');
+}
+
+function submitEditForm() {
+    const instanceId = document.getElementById('edit-instance-id').value;
+    const formData = new FormData(document.getElementById('edit-form'));
+    const data = {};
+    formData.forEach((value, key) => { if (key !== 'instance_id') data[key] = value; });
+
+    fetch(`/admin/instances/${instanceId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(res => res.json())
+    .then(result => {
+        if (result.error) {
+            showMessage('error', result.error);
+        } else {
+            showMessage('success', result.message || '保存成功');
+            closeEditModal();
+            setTimeout(() => location.reload(), 500);
+        }
+    })
+    .catch(err => showMessage('error', '保存失败'));
+}
+
+function deleteInstance(instanceId) {
+    if (confirm('确定要删除此实例吗？相关账号也会被删除。')) {
+        fetch(`/admin/instances/${instanceId}`, { method: 'DELETE' })
+            .then(res => res.json())
+            .then(result => {
+                showMessage('success', result.message || '已删除');
+                setTimeout(() => location.reload(), 500);
+            })
+            .catch(err => showMessage('error', '删除失败'));
+    }
+}
+
+function deleteAccount(accountId) {
+    if (confirm('确定要解绑此账号吗？')) {
+        fetch(`/admin/accounts/${accountId}`, { method: 'DELETE' })
+            .then(res => res.json())
+            .then(result => {
+                showMessage('success', result.message || '已解绑');
+                setTimeout(() => location.reload(), 500);
+            })
+            .catch(err => showMessage('error', '解绑失败'));
+    }
+}
+
+function showMessage(type, message) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type}`;
+    alertDiv.style.margin = '1rem';
+    alertDiv.textContent = message;
+    const container = document.getElementById('alerts-container');
+    if (container) container.insertBefore(alertDiv, container.firstChild);
+    setTimeout(() => alertDiv.remove(), 5000);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    // Handle URL params for messages/errors
+    const params = new URLSearchParams(window.location.search);
+    const errorMsg = params.get('error');
+    const successMsg = params.get('message');
+    if (errorMsg) showMessage('error', errorMsg);
+    if (successMsg) showMessage('success', successMsg);
+
+    // Handle hash for tabs
     const hash = window.location.hash.substring(1);
     if (hash && document.getElementById('tab-' + hash)) switchTab(hash);
+
+    // Close modal on overlay click
+    document.getElementById('edit-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'edit-modal') closeEditModal();
+    });
+
+    // Close modal on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && document.getElementById('edit-modal').classList.contains('open')) {
+            closeEditModal();
+        }
+    });
 });
 </script>
 {% endblock %}

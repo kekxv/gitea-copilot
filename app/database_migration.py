@@ -4,14 +4,22 @@ from sqlalchemy import text, inspect
 from sqlalchemy.orm import Session
 from .models import Migration
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 # Migration tasks: (version, list of SQL statements)
 # Version 1: Add columns for notification polling
+# Version 2: Add unique index for processed_events
+# Version 3: Add auth_mode column for token/oauth distinction
 MIGRATIONS = [
     (1, [
         "ALTER TABLE system_config ADD COLUMN notification_poll_interval INTEGER DEFAULT 1",
         "ALTER TABLE gitea_accounts ADD COLUMN last_notified_at DATETIME"
+    ]),
+    (2, [
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_processed_event_ref ON processed_events (event_type, reference_id)"
+    ]),
+    (3, [
+        "ALTER TABLE gitea_accounts ADD COLUMN auth_mode VARCHAR(10) DEFAULT 'oauth'"
     ]),
 ]
 

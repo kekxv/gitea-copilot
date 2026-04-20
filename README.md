@@ -62,12 +62,63 @@
 - Gitea 实例
 - OpenAI 兼容的 LLM API (如 OpenAI, DeepSeek, Ollama 等)
 
-### Docker 部署 (推荐)
-```bash
-# 拉取镜像
-docker pull ghcr.io/kekxv/gitea-copilot:latest
+### 环境变量配置
 
-# 运行容器
+系统支持通过环境变量进行配置，分为以下几类：
+
+#### Token 模式（推荐简化部署）
+使用 Gitea Token 直接访问，无需 OAuth 流程：
+
+```bash
+GITEA_URL=https://gitea.example.com    # Gitea 实例地址
+GITEA_TOKEN=your-access-token           # Gitea 访问令牌
+```
+
+获取 Token：在 Gitea 设置 → 应用 → 管理访问令牌 中创建。
+
+#### OAuth 模式（可选）
+如果需要 OAuth 授权流程，可配置：
+
+```bash
+GITEA_CLIENT_ID=your-client-id          # OAuth 应用 Client ID
+GITEA_CLIENT_SECRET=your-client-secret  # OAuth 应用 Client Secret
+```
+
+#### LLM 配置
+支持两种环境变量命名方式：
+
+```bash
+# 方式一：LLM_* 变量
+LLM_BASE_URL=https://api.openai.com/v1  # API 地址
+LLM_API_KEY=your-api-key                 # API 密钥
+LLM_MODEL=gpt-4o-mini                    # 模型名称
+
+# 方式二：OPENAI_* 变量（兼容现有配置）
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=your-api-key
+OPENAI_MODEL=gpt-4o-mini
+```
+
+**优先级**: 数据库配置 > LLM_* 变量 > OPENAI_* 变量 > 默认值
+
+### Docker 部署 (推荐)
+
+#### Token 模式部署（最简单）
+```bash
+docker run -d \
+  --name gitea-copilot \
+  -p 8000:8000 \
+  -v gitea-copilot-data:/app/data \
+  -e GITEA_URL=https://gitea.example.com \
+  -e GITEA_TOKEN=your-access-token \
+  -e LLM_BASE_URL=https://api.openai.com/v1 \
+  -e LLM_API_KEY=your-api-key \
+  -e LLM_MODEL=gpt-4o-mini \
+  ghcr.io/kekxv/gitea-copilot:latest
+```
+
+#### OAuth 模式部署
+```bash
 docker run -d \
   --name gitea-copilot \
   -p 8000:8000 \
@@ -78,7 +129,7 @@ docker run -d \
   ghcr.io/kekxv/gitea-copilot:latest
 ```
 
-访问 `http://localhost:8000` 进入管理界面进行配置。
+访问 `http://localhost:8000` 进入管理界面配置 OAuth。
 
 ### 源码安装
 1. **克隆仓库**:
@@ -89,6 +140,9 @@ docker run -d \
 
 2. **使用 uv 运行 (推荐)**:
    ```bash
+   # Token 模式
+   export GITEA_URL=https://gitea.example.com
+   export GITEA_TOKEN=your-access-token
    uv run main.py
    ```
    或者使用传统方式:
@@ -98,8 +152,17 @@ docker run -d \
    ```
 
 3. **配置**: 
-   - 启动后进入管理后台配置 Gitea 访问令牌及 LLM API 信息。
-   - 在 Gitea 仓库中设置 Webhook。
+   - Token 模式：设置环境变量后自动初始化
+   - OAuth 模式：进入管理后台配置 Gitea 实例
+
+## 🔄 授权模式对比
+
+| 特性 | Token 模式 | OAuth 模式 |
+| :--- | :--- | :--- |
+| 配置方式 | 环境变量 | 管理后台 + OAuth 流程 |
+| Token 管理 | 手动更新 | 自动刷新 |
+| 适用场景 | 个人/简单部署 | 多用户/企业部署 |
+| 配置难度 | 低 | 中 |
 
 ## 🛡️ 安全与隐私
 - **敏感信息过滤**: 系统内置高精度正则脱敏引擎，严禁在评论中泄露 Token、密码等隐私数据。

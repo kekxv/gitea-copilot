@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from ..models import AuditLog
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 # Action constants

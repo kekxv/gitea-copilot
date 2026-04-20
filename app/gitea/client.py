@@ -9,7 +9,7 @@ import base64
 import hmac
 import hashlib
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 class GiteaClient(BaseGitClient):
@@ -28,20 +28,28 @@ class GiteaClient(BaseGitClient):
         self.db_session = db_session
 
     async def _ensure_valid_token(self):
-        """Check if token is about to expire and refresh if needed."""
+        """Check if token is about to expire and refresh if needed (OAuth mode only)."""
         if not self.account_id or not self.db_session:
             return
 
         from ..models import GiteaAccount, GiteaInstance
-        
+
         account = self.db_session.query(GiteaAccount).filter(GiteaAccount.id == self.account_id).first()
-        if not account or not account.token_expires_at:
+        if not account:
+            return
+
+        # Token mode doesn't need refresh - token is managed externally
+        if account.auth_mode == "token":
+            return
+
+        # OAuth mode: check if token expires
+        if not account.token_expires_at:
             return
 
         # Refresh if expires in less than 10 minutes
         if datetime.utcnow() + timedelta(minutes=10) >= account.token_expires_at:
             logger.info(f"Token for account {self.account_id} is near expiry, refreshing...")
-            
+
             instance = self.db_session.query(GiteaInstance).filter(GiteaInstance.id == account.instance_id).first()
             if not instance:
                 logger.error("Cannot refresh token: Instance not found")
@@ -49,7 +57,7 @@ class GiteaClient(BaseGitClient):
 
             from ..tasks.token_manager import refresh_token
             success = await refresh_token(account, instance)
-            
+
             if success:
                 self.db_session.commit()
                 self.access_token = account.access_token
@@ -91,7 +99,7 @@ class GiteaClient(BaseGitClient):
                 logger.warning(f"Gitea API 401 Unauthorized for {path}. Token might have been revoked.")
                 # We could try one more refresh here if needed
 
-            if response.status_code not in (200, 201, 204):
+            if response.status_code not in (200, 201, 204, 205):
                 logger.error(f"Gitea API error: status {response.status_code} on {path}")
                 raise Exception(f"Gitea API error: {response.status_code}")
 
@@ -428,15 +436,20 @@ class GiteaClient(BaseGitClient):
             "limit": limit
         }
         if since:
-            # Gitea expects ISO 8601 format
-            params["since"] = since.isoformat()
+            # Gitea expects RFC3339/ISO 8601 format like YYYY-MM-DDTHH:MM:SSZ
+            # Ensure no microseconds and add Z suffix for UTC
+            params["since"] = since.replace(microsecond=0).isoformat() + "Z"
 
-        return await self._request("GET", "/user/notifications", params=params)
+        # Correct Gitea API path is /notifications, not /user/notifications
+        return await self._request("GET", "/notifications", params=params)
 
     async def mark_notification_as_read(self, notification_id: int) -> bool:
-        """Mark a notification as read."""
+        """Mark a notification as read.
+        
+        Uses PATCH /notifications/threads/{id} for specific thread.
+        """
         try:
-            await self._request("PATCH", f"/user/notifications/{notification_id}")
+            await self._request("PATCH", f"/notifications/threads/{notification_id}")
             return True
         except Exception:
             return False
@@ -444,3 +457,7 @@ class GiteaClient(BaseGitClient):
     async def get_comment_by_id(self, owner: str, repo: str, comment_id: int) -> Dict:
         """Get an issue/PR comment by its ID."""
         return await self._request("GET", f"/repos/{owner}/{repo}/issues/comments/{comment_id}")
+
+    async def get_issue_comments(self, owner: str, repo: str, issue_number: int) -> List[Dict]:
+        """Get all comments for an issue or pull request."""
+        return await self._request("GET", f"/repos/{owner}/{repo}/issues/{issue_number}/comments")
