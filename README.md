@@ -2,7 +2,7 @@
 
 一个基于 LLM 的 Gitea 智能助手，能够自动执行代码审查（Code Review）、打标签、根据项目文档回答问题等任务。
 
-**项目地址**: [github.com/kekxv/GiteaCopilot](https://github.com/kekxv/GiteaCopilot)
+**项目地址**: [github.com/kekxv/gitea-copilot](https://github.com/kekxv/gitea-copilot)
 
 ## 🌟 核心功能展示
 
@@ -56,8 +56,8 @@ docker run -d \
 ### 源码安装
 1. **克隆仓库**:
    ```bash
-   git clone https://github.com/kekxv/GiteaCopilot.git
-   cd GiteaCopilot
+   git clone https://github.com/kekxv/gitea-copilot.git
+   cd gitea-copilot
    ```
 
 2. **使用 uv 运行 (推荐)**:

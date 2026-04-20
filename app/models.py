@@ -69,3 +69,25 @@ class ProcessedEvent(Base):
     event_type = Column(String, nullable=False)
     reference_id = Column(String, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class OAuthState(Base):
+    __tablename__ = "oauth_states"
+
+    id = Column(Integer, primary_key=True, index=True)
+    state = Column(String, unique=True, index=True, nullable=False)
+    instance_id = Column(Integer, nullable=False)
+    redirect_url = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    action = Column(String, nullable=False)  # e.g., "ADMIN_LOGIN", "WEBHOOK_FAILED", "CONFIG_CHANGED"
+    username = Column(String, nullable=True)  # User who performed the action
+    ip_address = Column(String, nullable=True)  # Client IP address
+    status = Column(String, nullable=False)  # "SUCCESS" or "FAILURE"
+    details = Column(String, nullable=True)  # Additional details (JSON string)

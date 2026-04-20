@@ -2,7 +2,8 @@ from fastapi import APIRouter, Request, Response, BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
 from ..database import SessionLocal
 from ..models import ProcessedEvent, GiteaAccount, GiteaInstance, SystemConfig
-from ..gitea import decode_user_context
+from ..gitea import decode_user_context, verify_hmac_signature
+from ..utils.audit import log_webhook_event
 import json
 import logging
 import time
@@ -10,6 +11,32 @@ import time
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def verify_webhook_signature(body: bytes, signature: str, db: Session) -> bool:
+    """Verify Gitea webhook HMAC-SHA256 signature.
+    
+    Gitea sends X-Gitea-Signature header containing HMAC-SHA256 hex digest
+    of the raw request body using the webhook secret.
+    
+    Returns True if signature is valid, False otherwise.
+    """
+    if not signature:
+        return False
+    
+    # Get webhook signing key from system config
+    config = db.query(SystemConfig).first()
+    if config and config.webhook_signing_key:
+        signing_key = config.webhook_signing_key
+    else:
+        import os
+        signing_key = os.getenv("WEBHOOK_SIGNING_KEY", "")
+    
+    if not signing_key:
+        logger.error("No webhook signing key configured")
+        return False
+    
+    return verify_hmac_signature(body, signature, signing_key)
 
 
 def check_idempotency(db: Session, event_type: str, reference_id: str) -> bool:
@@ -82,10 +109,47 @@ async def receive_gitea_webhook(
     x_gitea_event: str = Header(None, alias="X-Gitea-Event"),
     authorization: str = Header(None, alias="Authorization")
 ):
-    """Receive and process Gitea webhook."""
+    """Receive and process Gitea webhook.
+
+    Security: Validates HMAC-SHA256 signature from X-Gitea-Signature header
+    before processing the webhook payload.
+    """
     logger.info("=== WEBHOOK RECEIVED ===")
 
+    # Get client IP for audit logging
+    client_ip = request.client.host if request.client else "unknown"
+
     body = await request.body()
+
+    # Verify webhook signature FIRST - reject invalid signatures immediately
+    db_verify = SessionLocal()
+    try:
+        if not verify_webhook_signature(body, x_gitea_signature, db_verify):
+            logger.warning(f"Invalid webhook signature: {x_gitea_signature[:20] if x_gitea_signature else 'missing'}...")
+            # Audit log for failed signature
+            log_webhook_event(
+                db_verify,
+                event_type=x_gitea_event or "unknown",
+                status="FAILURE",
+                details={"reason": "invalid_signature", "signature": x_gitea_signature[:20] if x_gitea_signature else "missing"},
+                ip_address=client_ip
+            )
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        logger.info("Webhook signature verified successfully")
+        
+        # Audit log for successful signature verification
+        log_webhook_event(
+            db_verify,
+            event_type=x_gitea_event or "unknown",
+            status="SUCCESS",
+            details={"action": action},
+            ip_address=client_ip
+        )
+    except HTTPException:
+        db_verify.close()
+        raise
+    finally:
+        db_verify.close()
 
     try:
         payload = json.loads(body)

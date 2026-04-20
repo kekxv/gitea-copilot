@@ -1,38 +1,71 @@
 import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
-from ..models import GiteaInstance, GiteaAccount
+from ..models import GiteaInstance, GiteaAccount, OAuthState
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 import logging
+from ..utils.encryption import decrypt_sensitive_value, encrypt_sensitive_value
 
 logger = logging.getLogger(__name__)
 
-# Store temporary OAuth states (in production, use Redis or DB)
-oauth_states: dict[str, dict] = {}
 
-
-def create_oauth_state(instance_id: int, redirect_url: str) -> str:
-    """Create a unique state for OAuth flow."""
+def create_oauth_state(instance_id: int, redirect_url: str, db: Session) -> str:
+    """Create a unique state for OAuth flow and store it in database.
+    
+    Args:
+        instance_id: The Gitea instance ID
+        redirect_url: The OAuth redirect URL
+        db: Database session
+        
+    Returns:
+        str: The generated state token
+    """
     state = secrets.token_urlsafe(32)
-    oauth_states[state] = {
-        "instance_id": instance_id,
-        "redirect_url": redirect_url,
-        "created_at": datetime.utcnow()
-    }
+    
+    oauth_state = OAuthState(
+        state=state,
+        instance_id=instance_id,
+        redirect_url=redirect_url,
+        created_at=datetime.utcnow()
+    )
+    db.add(oauth_state)
+    db.commit()
+    
     return state
 
 
-def validate_oauth_state(state: str) -> Optional[dict]:
-    """Validate and return OAuth state data."""
-    if state not in oauth_states:
+def validate_oauth_state(state: str, db: Session) -> Optional[dict]:
+    """Validate and return OAuth state data from database.
+    
+    Args:
+        state: The state token to validate
+        db: Database session
+        
+    Returns:
+        dict with instance_id and redirect_url, or None if invalid/expired
+    """
+    oauth_state = db.query(OAuthState).filter(OAuthState.state == state).first()
+    
+    if not oauth_state:
         return None
-    data = oauth_states[state]
+    
     # State expires after 10 minutes
-    if datetime.utcnow() - data["created_at"] > timedelta(minutes=10):
-        del oauth_states[state]
+    if datetime.utcnow() - oauth_state.created_at > timedelta(minutes=10):
+        db.delete(oauth_state)
+        db.commit()
         return None
+    
+    # Return state data and delete it (one-time use)
+    data = {
+        "instance_id": oauth_state.instance_id,
+        "redirect_url": oauth_state.redirect_url
+    }
+    
+    db.delete(oauth_state)
+    db.commit()
+    
     return data
 
 
@@ -52,6 +85,9 @@ async def exchange_code_for_token(
     """Exchange OAuth code for access token."""
     token_url = f"{instance.url.rstrip('/')}/login/oauth/access_token"
 
+    # Decrypt client secret before using
+    client_secret = decrypt_sensitive_value(instance.client_secret_encrypted)
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             token_url,
@@ -59,7 +95,7 @@ async def exchange_code_for_token(
                 "grant_type": "authorization_code",
                 "code": code,
                 "client_id": instance.client_id,
-                "client_secret": instance.client_secret_encrypted,  # In production, decrypt this
+                "client_secret": client_secret,
                 "redirect_uri": redirect_uri
             },
             headers={"Accept": "application/json"}
@@ -159,6 +195,9 @@ async def refresh_access_token(
 
     token_url = f"{instance.url.rstrip('/')}/login/oauth/access_token"
 
+    # Decrypt client secret before using
+    client_secret = decrypt_sensitive_value(instance.client_secret_encrypted)
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -167,7 +206,7 @@ async def refresh_access_token(
                     "grant_type": "refresh_token",
                     "refresh_token": account.refresh_token,
                     "client_id": instance.client_id,
-                    "client_secret": instance.client_secret_encrypted
+                    "client_secret": client_secret
                 },
                 headers={"Accept": "application/json"}
             )

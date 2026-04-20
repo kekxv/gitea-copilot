@@ -11,6 +11,7 @@ from ..auth.admin import (
     is_totp_enabled
 )
 from ..auth.utils import hash_password, verify_password
+from ..utils.security import get_or_create_secret_key
 from jose import jwt
 import os
 import secrets
@@ -18,7 +19,15 @@ import logging
 from datetime import datetime, timedelta
 
 router = APIRouter()
-SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-key")
+
+def get_secret_key() -> str:
+    """Get SECRET_KEY, initializing it if necessary."""
+    secret_key = os.getenv("SECRET_KEY")
+    if not secret_key:
+        # Initialize secret key if not set
+        secret_key = get_or_create_secret_key()
+    return secret_key
+
 ALGORITHM = "HS256"
 
 templates = Jinja2Templates(directory="app/templates")
@@ -35,7 +44,7 @@ def get_admin_from_token(request: Request, db: Session) -> Optional[Admin]:
     if not token:
         return None
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, get_secret_key(), algorithms=[ALGORITHM])
         username = payload.get("sub")
         return db.query(Admin).filter(Admin.username == username).first()
     except:
@@ -112,10 +121,19 @@ async def admin_register_submit(
     token_data = {"sub": admin.username}
     expire = datetime.utcnow() + timedelta(hours=8)
     token_data["exp"] = expire
-    token = jwt.encode(token_data, SECRET_KEY, algorithm=ALGORITHM)
+    token = jwt.encode(token_data, get_secret_key(), algorithm=ALGORITHM)
 
     response = RedirectResponse(url="/admin/dashboard", status_code=303)
-    response.set_cookie(key="admin_token", value=token, httponly=True, max_age=86400 * 8, samesite="strict", secure=False)
+    # Set secure cookie - use HTTPS only if request is secure
+    is_secure = request.url.scheme == "https"
+    response.set_cookie(
+        key="admin_token",
+        value=token,
+        httponly=True,
+        max_age=86400 * 8,
+        samesite="strict",
+        secure=is_secure
+    )
     return response
 
 
@@ -158,10 +176,19 @@ async def admin_login_submit(
         token_data = {"sub": admin.username}
         expire = datetime.utcnow() + timedelta(hours=8)
         token_data["exp"] = expire
-        token = jwt.encode(token_data, SECRET_KEY, algorithm=ALGORITHM)
+        token = jwt.encode(token_data, get_secret_key(), algorithm=ALGORITHM)
 
         response = RedirectResponse(url="/admin/dashboard", status_code=303)
-        response.set_cookie(key="admin_token", value=token, httponly=True, max_age=86400 * 8, samesite="strict", secure=False)
+        # Set secure cookie - use HTTPS only if request is secure
+        is_secure = request.url.scheme == "https"
+        response.set_cookie(
+            key="admin_token",
+            value=token,
+            httponly=True,
+            max_age=86400 * 8,
+            samesite="strict",
+            secure=is_secure
+        )
         return response
 
     except HTTPException:
@@ -437,10 +464,12 @@ async def create_instance(
     if not admin:
         return RedirectResponse(url="/admin/login")
 
+    from ..utils.encryption import encrypt_sensitive_value
+
     instance = GiteaInstance(
         url=url,
         client_id=client_id,
-        client_secret_encrypted=client_secret
+        client_secret_encrypted=encrypt_sensitive_value(client_secret)
     )
     db.add(instance)
     db.commit()
@@ -522,7 +551,7 @@ async def oauth_redirect(
             base_url = f"{scheme}://{host}"
     redirect_uri = base_url + "/oauth/callback"
 
-    state = gitea_auth.create_oauth_state(instance_id, redirect_uri)
+    state = gitea_auth.create_oauth_state(instance_id, redirect_uri, db)
     redirect_url = gitea_auth.get_oauth_redirect_url(instance, state, redirect_uri)
     return {"redirect_url": redirect_url, "state": state}
 
@@ -539,7 +568,7 @@ async def oauth_callback(
     from ..gitea import GiteaClient, generate_webhook_secret, encode_user_context
 
     # OAuth callback doesn't require admin login - the state validates the request
-    state_data = gitea_auth.validate_oauth_state(state)
+    state_data = gitea_auth.validate_oauth_state(state, db)
     if not state_data:
         return render(request, "admin/oauth_result.html", {
             "success": False,
@@ -548,7 +577,7 @@ async def oauth_callback(
         })
 
     instance_id = state_data["instance_id"]
-    gitea_auth.oauth_states.pop(state, None)
+    # State is already deleted by validate_oauth_state (one-time use)
     instance = db.query(GiteaInstance).filter(GiteaInstance.id == instance_id).first()
 
     if not instance:

@@ -19,6 +19,7 @@ from .database import engine, Base
 from .routes import admin, pages
 from .webhooks import router as webhook_router
 from .tasks import start_scheduler
+from .utils.security import get_or_create_secret_key, validate_secret_key
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,15 @@ async def lifespan(app: FastAPI):
     """Manage application lifespan - startup and shutdown."""
     # Startup
     Base.metadata.create_all(bind=engine)
+    
+    # Initialize and validate SECRET_KEY for JWT
+    get_or_create_secret_key()
+    if not validate_secret_key():
+        logger.error("SECRET_KEY validation failed! Check logs for details.")
+        # Don't fail startup, but log the issue
+    else:
+        logger.info("SECRET_KEY validated successfully")
+    
     start_scheduler()
     logger.info("Application started")
     yield
