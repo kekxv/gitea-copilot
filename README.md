@@ -35,7 +35,25 @@
 - Gitea 实例
 - OpenAI 兼容的 LLM API (如 OpenAI, DeepSeek, Ollama 等)
 
-### 安装与运行
+### Docker 部署 (推荐)
+```bash
+# 拉取镜像
+docker pull ghcr.io/kekxv/gitea-copilot:latest
+
+# 运行容器
+docker run -d \
+  --name gitea-copilot \
+  -p 8000:8000 \
+  -v gitea-copilot-data:/app/data \
+  -e LLM_BASE_URL=http://your-llm-server:11434/v1 \
+  -e LLM_API_KEY=your-api-key \
+  -e LLM_MODEL=your-model \
+  ghcr.io/kekxv/gitea-copilot:latest
+```
+
+访问 `http://localhost:8000` 进入管理界面进行配置。
+
+### 源码安装
 1. **克隆仓库**:
    ```bash
    git clone https://github.com/kekxv/GiteaCopilot.git

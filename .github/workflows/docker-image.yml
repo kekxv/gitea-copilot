@@ -96,6 +96,7 @@ jobs:
             ghcr.io/${{ github.repository }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: false
 
       - name: Create and push Git tag
         if: steps.version_check.outputs.release_needed == 'true'
