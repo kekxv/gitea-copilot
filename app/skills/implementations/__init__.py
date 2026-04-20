@@ -142,35 +142,57 @@ class AnalyzeSkill(BaseSkill):
         comment: Optional[Dict],
         payload: Dict[Any, Any]
     ) -> str:
-        """Analyze project docs and answer the question naturally."""
+        """Analyze project docs and answer the question naturally.
+
+        If intent is empty (just @mention without question), analyze and reply to
+        the issue/PR title and body content.
+        """
         owner, repo = self.get_repo_info(payload)
         if not owner or not repo: return "抱歉，我暂时无法获取这个仓库的信息。"
 
-        max_files = self.config.get("copilot_docs_limit", 10)
-        max_size_kb = self.config.get("copilot_docs_size_limit", 25)
-
-        # Get README (generic abstract client supports this via get_repo_file_content)
-        readme = await self.git_client.get_repo_file_content(owner, repo, "README.md")
-        
-        # Get custom copilot docs from .gitea/copilot directory
-        # (Note: For absolute purity, we'd abstract directory listing too, 
-        # but for now we rely on the standard file content access)
-        copilot_context = ""
-        
         issue_title = target.get("title", "")
         issue_body = target.get("body", "")
         sender = payload.get("sender", {}).get("login", "用户")
 
+        # Get README for context
+        readme = await self.git_client.get_repo_file_content(owner, repo, "README.md")
+
+        # Build context
         context_parts = []
         if readme: context_parts.append(f"**README:**\n{readme[:2000]}")
         if issue_title:
-            context_parts.append(f"**当前话题:** {issue_title}")
-            if issue_body: context_parts.append(f"**详细内容:** {issue_body[:500]}")
+            context_parts.append(f"**标题:** {issue_title}")
+            if issue_body: context_parts.append(f"**内容:**\n{issue_body}")
 
         context = "\n\n".join(context_parts) if context_parts else "暂无项目文档信息"
-        system_prompt = """你是项目团队的 AI 助手，回答要求简洁、自然、直接。"""
-        prompt = f"""{sender} 问：{intent}\n\n{context}"""
-        response = await self.llm.generate(prompt, system_prompt, max_tokens=1500)
+
+        # Determine the prompt based on intent
+        intent_clean = intent.strip()
+
+        if not intent_clean:
+            # User only @mentioned without question - analyze and reply to main content
+            system_prompt = """你是项目团队的 AI 助手。用户 @你但没有提问，请分析当前 Issue/PR 的内容，给出有用的回复或建议。
+
+如果内容是问题描述，尝试给出解决方案或分析原因。
+如果内容是功能请求，给出实现建议或相关讨论。
+如果内容是 PR，简要说明改动内容。
+回答要简洁、自然、直接。"""
+            prompt = f"""{sender} 在以下内容中 @了你，请分析并回复：
+
+**标题:** {issue_title}
+{context}"""
+        else:
+            # User has a specific question - answer it with full context
+            system_prompt = """你是项目团队的 AI 助手，回答要求简洁、自然、直接。
+请结合当前 Issue/PR 的完整内容来回答用户的问题。"""
+            prompt = f"""{sender} 问：{intent_clean}
+
+**当前 Issue/PR:**
+标题: {issue_title}
+{context}"""
+
+        max_tokens = self.config.get("ai_max_tokens", 1500)
+        response = await self.llm.generate(prompt, system_prompt, max_tokens=max_tokens)
         return response
 
 
