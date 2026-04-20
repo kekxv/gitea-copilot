@@ -1,5 +1,49 @@
 // GiteaCopilot Frontend JS
 
+// Toggle mobile navbar menu
+function toggleMenu() {
+    const menu = document.getElementById('navbar-menu');
+    if (menu) {
+        menu.classList.toggle('open');
+    }
+}
+
+// Toggle mobile sidebar
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (sidebar) {
+        sidebar.classList.toggle('open');
+    }
+    if (overlay) {
+        overlay.classList.toggle('open');
+    }
+}
+
+// Close menu/sidebar when clicking outside
+document.addEventListener('click', (e) => {
+    // Close navbar menu
+    const menu = document.getElementById('navbar-menu');
+    const toggle = document.querySelector('.navbar-toggle');
+    if (menu && menu.classList.contains('open') &&
+        !menu.contains(e.target) &&
+        toggle && !toggle.contains(e.target)) {
+        menu.classList.remove('open');
+    }
+
+    // Close sidebar
+    const sidebar = document.getElementById('sidebar');
+    const sidebarToggle = document.querySelector('.sidebar-toggle');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (sidebar && sidebar.classList.contains('open') &&
+        !sidebar.contains(e.target) &&
+        sidebarToggle && !sidebarToggle.contains(e.target) &&
+        overlay && !overlay.contains(e.target)) {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('open');
+    }
+});
+
 function showMessage(type, message) {
     const alertDiv = document.createElement('div');
     alertDiv.className = `alert alert-${type}`;

@@ -1,260 +1,285 @@
 {% extends "base.html" %}
-{% block title %}管理后台 - GiteaCopilot{% endblock %}
+{% block title %}管理后台{% endblock %}
 
-{% block content %}
-<div class="layout-container">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-        <nav class="sidebar-menu">
-            <a href="#overview" class="sidebar-link active" onclick="switchTab('overview')">
-                <span class="sidebar-icon">📊</span> 系统概览
-            </a>
-            <a href="#config" class="sidebar-link" onclick="switchTab('config')">
-                <span class="sidebar-icon">⚙️</span> 系统设置
-            </a>
-            <a href="#instances" class="sidebar-link" onclick="switchTab('instances')">
-                <span class="sidebar-icon">📦</span> 实例管理
-            </a>
-            <a href="#security" class="sidebar-link" onclick="switchTab('security')">
-                <span class="sidebar-icon">🛡️</span> 安全中心
-            </a>
-        </nav>
-    </aside>
+{% block layout %}
+{% if error %}
+<div class="alert alert-error" style="margin: 1rem;">{{ error }}</div>
+{% endif %}
+{% if message %}
+<div class="alert alert-success" style="margin: 1rem;">{{ message }}</div>
+{% endif %}
 
-    <!-- Main Content -->
-    <main class="dashboard-content">
-        <!-- Overview Tab -->
-        <div id="tab-overview" class="tab-pane">
-            <div class="dashboard-header">
-                <h1>系统概览</h1>
-                <p>管理员: <strong>{{ admin_username }}</strong></p>
+<div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="菜单">
+    <svg viewBox="0 0 24 24" width="20" height="20">
+        <path fill="currentColor" d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/>
+    </svg>
+</button>
+<aside class="sidebar" id="sidebar">
+    <nav class="sidebar-menu">
+        <a href="#overview" class="sidebar-link active" onclick="switchTab('overview')">
+            <span class="sidebar-icon">📊</span> 概览
+        </a>
+        <a href="#config" class="sidebar-link" onclick="switchTab('config')">
+            <span class="sidebar-icon">⚙️</span> 设置
+        </a>
+        <a href="#instances" class="sidebar-link" onclick="switchTab('instances')">
+            <span class="sidebar-icon">📦</span> 实例
+        </a>
+        <a href="#security" class="sidebar-link" onclick="switchTab('security')">
+            <span class="sidebar-icon">🛡️</span> 安全
+        </a>
+    </nav>
+</aside>
+
+<main class="dashboard-main">
+    <!-- Overview -->
+    <div id="tab-overview" class="tab-pane active">
+        <div class="dashboard-header">
+            <h1>系统概览</h1>
+            <p>管理员: {{ admin_username }}</p>
+        </div>
+        <div class="stats-grid">
+            <div class="stat-item">
+                <div class="stat-value">{{ stats.instances }}</div>
+                <div class="stat-label">Gitea 实例</div>
             </div>
-
-            <div class="stats-grid mb-3">
-                <div class="stat-item">
-                    <div class="stat-value">{{ stats.instances }}</div>
-                    <div class="stat-label">Gitea 实例</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value">{{ stats.accounts }}</div>
-                    <div class="stat-label">绑定账号</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value">{{ stats.events }}</div>
-                    <div class="stat-label">已处理事件</div>
-                </div>
+            <div class="stat-item">
+                <div class="stat-value">{{ stats.accounts }}</div>
+                <div class="stat-label">绑定账号</div>
             </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <h3>已绑定的账号状态</h3>
-                    <span class="text-muted">实时监控 Token 与 Webhook 状态</span>
-                </div>
-                <div class="card-body">
-                    {% if accounts %}
-                    <div class="list">
-                        {% for account in accounts %}
-                        <div class="list-item">
-                            <div class="list-item-info">
-                                <strong>@{{ account.gitea_username }}</strong>
-                                <span class="text-muted" style="margin-left: 0.5rem;">{{ account.instance_url }}</span>
-                                <div class="mt-1">
-                                    {% if account.webhook_id %}
-                                    <span class="status-pill active"><span class="dot"></span> Webhook 正常</span>
-                                    {% else %}
-                                    <span class="status-pill error"><span class="dot"></span> Webhook 缺失</span>
-                                    {% endif %}
-                                    
-                                    <!-- Token Health Logic -->
-                                    <span class="status-pill active" title="Token 将自动刷新">
-                                        <span class="dot"></span> OAuth2 已同步
-                                    </span>
-                                </div>
-                            </div>
-                            <button class="btn btn-outline btn-sm" onclick="deleteItem('/admin/accounts/{{ account.id }}', () => location.reload())">解除绑定</button>
+            <div class="stat-item">
+                <div class="stat-value">{{ stats.events }}</div>
+                <div class="stat-label">处理事件</div>
+            </div>
+        </div>
+        {% if instances %}
+        <div class="card">
+            <div class="card-header">
+                <h3>已配置实例</h3>
+                <span class="text-muted">点击授权绑定 Gitea 账号</span>
+            </div>
+            <div class="card-body">
+                <div class="list">
+                    {% for instance in instances %}
+                    <div class="list-item">
+                        <div class="list-item-info">
+                            <strong>{{ instance.url }}</strong>
+                            {% if instance.accounts %}
+                            <p class="text-muted">已授权: {{ instance.accounts|join(', ') }}</p>
+                            {% else %}
+                            <p class="text-muted">未授权账号</p>
+                            {% endif %}
                         </div>
-                        {% endfor %}
+                        <div class="action-group">
+                            <button class="btn btn-primary btn-sm" onclick="startOAuth({{ instance.id }})">授权</button>
+                            <button class="btn btn-outline btn-sm" onclick="deleteItem('/admin/instances/{{ instance.id }}', () => location.reload())">删除</button>
+                        </div>
                     </div>
-                    {% else %}
-                    <p class="text-center text-muted p-2">暂无绑定账号</p>
-                    {% endif %}
+                    {% endfor %}
                 </div>
             </div>
         </div>
-
-        <!-- Config Tab -->
-        <div id="tab-config" class="tab-pane" style="display:none">
-            <div class="dashboard-header">
-                <h1>系统设置</h1>
-                <p>配置 AI 模型与运行限制参数</p>
+        {% endif %}
+        {% if accounts %}
+        <div class="card">
+            <div class="card-header">
+                <h3>绑定账号</h3>
             </div>
-
-            <div class="card">
-                <div class="card-body">
-                    <form action="/admin/config" method="post">
-                        <div class="grid grid-2">
-                            <div class="form-group">
-                                <label for="llm_base_url">OpenAI Base URL</label>
-                                <input type="url" id="llm_base_url" name="llm_base_url" value="{{ config.llm_base_url or 'https://api.openai.com/v1' }}">
-                            </div>
-                            <div class="form-group">
-                                <label for="llm_model">模型名称</label>
-                                <input type="text" id="llm_model" name="llm_model" value="{{ config.llm_model or 'gpt-4o-mini' }}">
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="llm_api_key">API Key</label>
-                            <div style="display: flex; gap: 0.5rem; align-items: center;">
-                                <input type="password" id="llm_api_key" name="llm_api_key" placeholder="输入新 Key 以更新">
-                                {% if config.llm_api_key %}<span class="badge badge-success">已配置</span>{% endif %}
-                            </div>
-                        </div>
-
-                        <hr class="mt-2 mb-2" style="border: 0; border-top: 1px solid var(--border);">
-
-                        <div class="grid grid-2">
-                            <div class="form-group">
-                                <label>上下文文件数上限</label>
-                                <input type="number" name="copilot_docs_limit" value="{{ config.copilot_docs_limit or 10 }}">
-                            </div>
-                            <div class="form-group">
-                                <label>单次最大输出 Token</label>
-                                <input type="number" name="ai_max_tokens" value="{{ config.ai_max_tokens or 8000 }}">
-                            </div>
-                        </div>
-                        
-                        <button type="submit" class="btn btn-primary mt-2">保存全局配置</button>
-                    </form>
-                </div>
-            </div>
-        </div>
-
-        <!-- Instances Tab -->
-        <div id="tab-instances" class="tab-pane" style="display:none">
-            <div class="dashboard-header">
-                <h1>实例管理</h1>
-                <p>管理连接的 Gitea 实例与 OAuth 应用</p>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <h3>添加新实例</h3>
-                </div>
-                <div class="card-body">
-                    <div class="alert alert-info">
-                        <strong>回调地址:</strong> <code id="callback-url">{{ callback_url }}</code>
-                        <button class="btn btn-sm btn-outline" style="padding: 2px 8px; margin-left: 10px" onclick="copyToClipboard('{{ callback_url }}')">复制</button>
-                    </div>
-                    <form action="/admin/instances" method="post" class="mt-2">
-                        <div class="form-group">
-                            <label>Gitea URL</label>
-                            <input type="url" name="url" required placeholder="https://gitea.example.com">
-                        </div>
-                        <div class="grid grid-2">
-                            <div class="form-group"><label>Client ID</label><input type="text" name="client_id" required></div>
-                            <div class="form-group"><label>Client Secret</label><input type="password" name="client_secret" required></div>
-                        </div>
-                        <button type="submit" class="btn btn-primary">注册实例</button>
-                    </form>
-                </div>
-            </div>
-
-            {% if instances %}
-            <div class="card mt-2">
-                <div class="card-header"><h3>已配置的实例</h3></div>
-                <div class="card-body">
-                    <div class="list">
-                        {% for instance in instances %}
-                        <div class="list-item">
-                            <div class="list-item-info">
-                                <strong>{{ instance.url }}</strong>
-                                <p class="text-muted">ID: {{ instance.client_id }}</p>
-                            </div>
-                            <div class="action-group">
-                                <button class="btn btn-primary btn-sm" onclick="startOAuth({{ instance.id }})">授权新账号</button>
-                                <button class="btn btn-outline btn-sm" onclick="deleteItem('/admin/instances/{{ instance.id }}', () => location.reload())">删除</button>
-                            </div>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-            </div>
-            {% endif %}
-        </div>
-
-        <!-- Security Tab -->
-        <div id="tab-security" class="tab-pane" style="display:none">
-            <div class="dashboard-header">
-                <h1>安全中心</h1>
-                <p>保护您的管理账号与敏感数据</p>
-            </div>
-
-            <div class="card">
-                <div class="card-body">
-                    <div class="security-items">
-                        <div class="security-item">
-                            <div class="security-item-info">
-                                <strong>登录密码</strong>
-                                <span class="text-muted">定期修改密码以确保账号安全</span>
-                            </div>
-                            <a href="/admin/password" class="btn btn-outline btn-sm">修改密码</a>
-                        </div>
-
-                        <div class="security-item">
-                            <div class="security-item-info">
-                                <strong>两步验证 (TOTP)</strong>
-                                {% if admin_totp_enabled %}
-                                <span class="badge badge-success">已启用保护</span>
+            <div class="card-body">
+                <div class="list">
+                    {% for account in accounts %}
+                    <div class="list-item">
+                        <div class="list-item-info">
+                            <strong>@{{ account.gitea_username }}</strong>
+                            <span class="text-muted" style="margin-left: 0.5rem; font-size: 0.8rem;">{{ account.instance_url }}</span>
+                            <div class="mt-1">
+                                {% if account.webhook_id %}
+                                <span class="status-pill active"><span class="dot"></span> Webhook</span>
                                 {% else %}
-                                <span class="badge badge-warning">未启用 (建议开启)</span>
+                                <span class="status-pill error"><span class="dot"></span> 缺失</span>
                                 {% endif %}
                             </div>
-                            <a href="/admin/totp" class="btn btn-outline btn-sm">
-                                {% if admin_totp_enabled %}管理设置{% else %}立即开启{% endif %}
-                            </a>
                         </div>
-                        
-                        <div class="security-item">
-                            <div class="security-item-info">
-                                <strong>敏感信息脱敏</strong>
-                                <span class="text-muted">系统已开启强力正则脱敏，严禁泄露 Key/Token</span>
-                            </div>
-                            <span class="status-pill active"><span class="dot"></span> 运行中</span>
+                        <button class="btn btn-outline btn-sm" onclick="deleteItem('/admin/accounts/{{ account.id }}', () => location.reload())">解绑</button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        {% if not instances and not accounts %}
+        <div class="card">
+            <div class="card-body text-center">
+                <p class="text-muted">暂无实例和账号，请先在「实例」页面添加 Gitea 实例</p>
+                <a href="#instances" class="btn btn-primary mt-2" onclick="switchTab('instances')">添加实例</a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Config -->
+    <div id="tab-config" class="tab-pane">
+        <div class="dashboard-header">
+            <h1>系统设置</h1>
+            <p>配置系统与 AI 参数</p>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <h3>系统配置</h3>
+            </div>
+            <div class="card-body">
+                <form action="/admin/config" method="post">
+                    <div class="form-group">
+                        <label>系统 Host 地址</label>
+                        <input type="url" name="host_url" value="{{ config.host_url or '' }}" placeholder="https://your-domain.com">
+                        <small class="form-hint">用于生成 OAuth 回调地址和 Webhook URL，不填则使用当前请求地址</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Webhook 签名密钥</label>
+                        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                            <input type="password" name="webhook_signing_key" value="{{ config.webhook_signing_key or '' }}" placeholder="留空保持现有">
+                            {% if config.webhook_signing_key %}<span class="badge badge-success">已配置</span>{% endif %}
+                            <button type="submit" name="generate_new_signing_key" value="1" class="btn btn-sm btn-secondary">生成新密钥</button>
                         </div>
+                        <small class="form-hint">用于验证 Webhook 授权签名，防止伪造请求</small>
+                    </div>
+                    <hr>
+                    <div class="grid grid-2">
+                        <div class="form-group">
+                            <label>API Base URL</label>
+                            <input type="url" name="llm_base_url" value="{{ config.llm_base_url or 'https://api.openai.com/v1' }}">
+                        </div>
+                        <div class="form-group">
+                            <label>模型名称</label>
+                            <input type="text" name="llm_model" value="{{ config.llm_model or 'gpt-4o-mini' }}">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <input type="password" name="llm_api_key" placeholder="输入新 Key 更新">
+                            {% if config.llm_api_key %}<span class="badge badge-success">已配置</span>{% endif %}
+                        </div>
+                    </div>
+                    <hr>
+                    <div class="grid grid-2">
+                        <div class="form-group">
+                            <label>文档数上限</label>
+                            <input type="number" name="copilot_docs_limit" value="{{ config.copilot_docs_limit or 10 }}">
+                        </div>
+                        <div class="form-group">
+                            <label>最大输出 Token</label>
+                            <input type="number" name="ai_max_tokens" value="{{ config.ai_max_tokens or 8000 }}">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary mt-2">保存配置</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Instances -->
+    <div id="tab-instances" class="tab-pane">
+        <div class="dashboard-header">
+            <h1>实例管理</h1>
+            <p>添加新的 Gitea 实例</p>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <h3>添加实例</h3>
+            </div>
+            <div class="card-body">
+                <div class="callback-box">
+                    <label>回调地址 (OAuth)</label>
+                    <div class="callback-url-wrap">
+                        <code class="callback-url">{{ callback_url }}</code>
+                        <button class="btn btn-sm btn-secondary" onclick="copyToClipboard('{{ callback_url }}')">复制</button>
+                    </div>
+                </div>
+                <div class="callback-box" style="margin-bottom: 1rem;">
+                    <label>Webhook 地址</label>
+                    <div class="callback-url-wrap">
+                        <code class="callback-url">{{ webhook_url }}</code>
+                        <button class="btn btn-sm btn-secondary" onclick="copyToClipboard('{{ webhook_url }}')">复制</button>
+                    </div>
+                </div>
+                <form action="/admin/instances" method="post" class="mt-2">
+                    <div class="form-group">
+                        <label>Gitea URL</label>
+                        <input type="url" name="url" required placeholder="https://gitea.example.com">
+                    </div>
+                    <div class="grid grid-2">
+                        <div class="form-group"><label>Client ID</label><input type="text" name="client_id" required></div>
+                        <div class="form-group"><label>Client Secret</label><input type="password" name="client_secret" required></div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">注册实例</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Security -->
+    <div id="tab-security" class="tab-pane">
+        <div class="dashboard-header">
+            <h1>安全中心</h1>
+            <p>账号安全设置</p>
+        </div>
+        <div class="card">
+            <div class="card-body">
+                <div class="security-items">
+                    <div class="security-item">
+                        <div class="security-item-info">
+                            <strong>登录密码</strong>
+                            <span class="text-muted">定期修改确保安全</span>
+                        </div>
+                        <a href="/admin/password" class="btn btn-outline btn-sm">修改</a>
+                    </div>
+                    <div class="security-item">
+                        <div class="security-item-info">
+                            <strong>两步验证</strong>
+                            {% if admin_totp_enabled %}
+                            <span class="badge badge-success">已启用</span>
+                            {% else %}
+                            <span class="badge badge-warning">未启用</span>
+                            {% endif %}
+                        </div>
+                        <a href="/admin/totp" class="btn btn-outline btn-sm">
+                            {% if admin_totp_enabled %}管理{% else %}开启{% endif %}
+                        </a>
+                    </div>
+                    <div class="security-item">
+                        <div class="security-item-info">
+                            <strong>敏感信息脱敏</strong>
+                            <span class="text-muted">自动过滤 Key/Token</span>
+                        </div>
+                        <span class="status-pill active"><span class="dot"></span> 启用</span>
                     </div>
                 </div>
             </div>
         </div>
+        <footer class="footer">
+            <p>GiteaCopilot · AI 智能助手</p>
+        </footer>
     </main>
-</div>
 
-<script>
+    <script>
 function switchTab(tabName) {
-    // Update menu links
     document.querySelectorAll('.sidebar-link').forEach(link => {
         link.classList.remove('active');
-        if (link.getAttribute('href') === '#' + tabName) {
-            link.classList.add('active');
-        }
+        if (link.getAttribute('href') === '#' + tabName) link.classList.add('active');
     });
-    
-    // Update tab panes
-    document.querySelectorAll('.tab-pane').forEach(pane => {
-        pane.style.display = 'none';
-    });
-    document.getElementById('tab-' + tabName).style.display = 'block';
-    
-    // Update URL hash
+    document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.remove('active'));
+    document.getElementById('tab-' + tabName).classList.add('active');
     window.location.hash = tabName;
+    if (window.innerWidth <= 768) {
+        document.getElementById('sidebar').classList.remove('open');
+        document.getElementById('sidebar-overlay').classList.remove('open');
+    }
 }
-
-// Handle initial hash
 document.addEventListener('DOMContentLoaded', () => {
     const hash = window.location.hash.substring(1);
-    if (hash && document.getElementById('tab-' + hash)) {
-        switchTab(hash);
-    }
+    if (hash && document.getElementById('tab-' + hash)) switchTab(hash);
 });
 </script>
 {% endblock %}

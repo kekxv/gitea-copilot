@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import httpx
 import json
+import time
 import logging
 import base64
 import hmac
@@ -334,6 +335,18 @@ class GiteaClient(BaseGitClient):
             data={"body": body}
         )
 
+    async def close_issue(self, owner: str, repo: str, issue_number: int) -> Dict:
+        """Close an issue or PR.
+
+        In Gitea, PRs are also issues, so this works for both.
+        Uses PATCH to update state to 'closed'.
+        """
+        return await self._request(
+            "PATCH",
+            f"/repos/{owner}/{repo}/issues/{issue_number}",
+            data={"state": "closed"}
+        )
+
     # ============ Pull Request Operations ============
 
     async def get_pull_request(self, owner: str, repo: str, pr_number: int) -> Dict:
@@ -420,6 +433,7 @@ class GiteaClient(BaseGitClient):
         """
         data = {
             "type": "gitea",
+            "name": "GiteaCopilot",
             "config": {
                 "url": webhook_url,
                 "content_type": "json",
@@ -452,23 +466,86 @@ def generate_webhook_secret() -> str:
     return secrets.token_urlsafe(32)
 
 
-def encode_user_context(instance_id: int, account_id: int) -> str:
-    """Encode user context as Base64 for webhook Authorization header."""
-    context = f"{instance_id}:{account_id}"
-    return base64.b64encode(context.encode()).decode()
+def generate_signing_key() -> str:
+    """Generate a random signing key for webhook auth."""
+    import secrets
+    return secrets.token_urlsafe(32)
 
 
-def decode_user_context(encoded: str) -> tuple[int, int]:
-    """Decode user context from Base64 Authorization header.
-    
-    Returns (instance_id, account_id) or (0, 0) if invalid.
+def encode_user_context(instance_id: int, account_id: int, signing_key: str) -> str:
+    """Encode user context as binary with HMAC signature, then base64url.
+
+    Binary format (40 bytes total):
+    - instance_id: 4 bytes (uint32, big-endian)
+    - account_id: 4 bytes (uint32, big-endian)
+    - signature: 32 bytes (HMAC-SHA256 of the 8-byte message)
+
+    Base64url encoded result is about 56 characters.
+    No timestamp - webhook auth header is set once and used indefinitely.
     """
+    import struct
+
+    # Pack message (8 bytes)
+    message = struct.pack('>II', instance_id, account_id)
+
+    # Calculate HMAC-SHA256 signature (32 bytes)
+    signature = hmac.new(
+        signing_key.encode(),
+        message,
+        hashlib.sha256
+    ).digest()
+
+    # Combine message + signature (40 bytes)
+    payload = message + signature
+
+    # Base64url encode without padding
+    return base64.urlsafe_b64encode(payload).rstrip(b'=').decode()
+
+
+def decode_user_context(encoded: str, signing_key: str) -> tuple[int, int]:
+    """Decode user context from base64url binary and validate signature.
+
+    Returns (instance_id, account_id) or (0, 0) if invalid.
+
+    Validates:
+    - Payload length (40 bytes)
+    - HMAC signature
+    """
+    import struct
     try:
-        decoded = base64.b64decode(encoded).decode()
-        if ":" not in decoded:
+        # Add padding if needed (base64url without padding)
+        padding = 4 - len(encoded) % 4
+        if padding != 4:
+            encoded += '=' * padding
+
+        # Decode base64url
+        payload = base64.urlsafe_b64decode(encoded)
+
+        # Validate length (40 bytes: 8 message + 32 signature)
+        if len(payload) != 40:
+            logger.warning(f"Invalid payload length: {len(payload)}")
             return 0, 0
-        instance_id, account_id = decoded.split(":", 1)
+
+        # Split message and signature
+        message = payload[:8]
+        signature = payload[8:]
+
+        # Verify signature
+        expected_sig = hmac.new(
+            signing_key.encode(),
+            message,
+            hashlib.sha256
+        ).digest()
+
+        if not hmac.compare_digest(signature, expected_sig):
+            logger.warning("Invalid signature")
+            return 0, 0
+
+        # Unpack fields
+        instance_id, account_id = struct.unpack('>II', message)
+
         return int(instance_id), int(account_id)
+
     except Exception as e:
         logger.warning(f"Failed to decode user context: {e}")
         return 0, 0

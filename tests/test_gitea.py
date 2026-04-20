@@ -78,8 +78,22 @@ def test_verify_hmac_signature():
 
 def test_user_context_encoding():
     instance_id, account_id = 1, 2
-    encoded = encode_user_context(instance_id, account_id)
-    decoded_i, decoded_a = decode_user_context(encoded)
-    
+    signing_key = "test-signing-key-123"
+
+    encoded = encode_user_context(instance_id, account_id, signing_key)
+    decoded_i, decoded_a = decode_user_context(encoded, signing_key)
+
     assert decoded_i == instance_id
     assert decoded_a == account_id
+
+    # Check encoded length (should be about 56 chars for 40 bytes base64url)
+    assert len(encoded) < 60  # Much shorter than JSON format (~140 chars)
+
+    # Test with wrong key should fail
+    decoded_wrong = decode_user_context(encoded, "wrong-key")
+    assert decoded_wrong == (0, 0)
+
+    # Test with corrupted payload should fail
+    corrupted = encoded[:-5] + "XXXXX"
+    decoded_corrupted = decode_user_context(corrupted, signing_key)
+    assert decoded_corrupted == (0, 0)

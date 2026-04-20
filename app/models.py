@@ -18,6 +18,11 @@ class SystemConfig(Base):
     __tablename__ = "system_config"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Host URL for callback addresses
+    host_url = Column(String, nullable=True)  # e.g. https://your-domain.com
+    # Webhook signing key for authorization
+    webhook_signing_key = Column(String, nullable=True)  # HMAC secret for webhook auth
+    # LLM config
     llm_base_url = Column(String, nullable=True, default="https://api.openai.com/v1")
     llm_api_key = Column(String, nullable=True)
     llm_model = Column(String, nullable=True, default="gpt-4o-mini")

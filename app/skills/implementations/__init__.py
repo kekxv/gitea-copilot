@@ -72,10 +72,37 @@ class HelpSkill(BaseSkill):
 **Review PR** - 分析代码变更
 `@我 review`
 
+**关闭 Issue/PR** - 静默关闭
+`@我 close`
+
 **帮助** - 显示这个信息
 `@我 help`
 
 有问题随时 @我 试试看！ 😊"""
+
+
+class CloseSkill(BaseSkill):
+    """Skill for closing issues and pull requests."""
+
+    async def execute(
+        self,
+        intent: str,
+        target: Dict[Any, Any],
+        comment: Optional[Dict],
+        payload: Dict[Any, Any]
+    ) -> str:
+        """Close the issue/PR - silently, no reply."""
+        owner, repo = self.get_repo_info(payload)
+        issue_number = self.get_issue_number(payload)
+        if not owner or not repo or not issue_number:
+            return ""
+
+        try:
+            await self.git_client.close_issue(owner, repo, issue_number)
+            logger.info(f"Closed {owner}/{repo}#{issue_number}")
+        except Exception as e:
+            logger.error(f"Failed to close issue: {e}", exc_info=True)
+        return ""
 
 
 class LabelSkill(BaseSkill):

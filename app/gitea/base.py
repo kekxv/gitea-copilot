@@ -36,6 +36,11 @@ class BaseGitClient(ABC):
         pass
 
     @abstractmethod
+    async def close_issue(self, owner: str, repo: str, issue_number: int) -> Dict[str, Any]:
+        """Close an issue or PR."""
+        pass
+
+    @abstractmethod
     async def get_pull_request(self, owner: str, repo: str, pr_number: int) -> Dict[str, Any]:
         """Get pull request details."""
         pass

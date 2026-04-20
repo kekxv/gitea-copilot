@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Request, Response, BackgroundTasks, HTTPException, Header
 from sqlalchemy.orm import Session
 from ..database import SessionLocal
-from ..models import ProcessedEvent, GiteaAccount, GiteaInstance
+from ..models import ProcessedEvent, GiteaAccount, GiteaInstance, SystemConfig
 from ..gitea import decode_user_context
 import json
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ def try_record_event(db: Session, event_type: str, reference_id: str) -> bool:
         # Check if already exists first
         if check_idempotency(db, event_type, reference_id):
             return False
-            
+
         event = ProcessedEvent(event_type=event_type, reference_id=reference_id)
         db.add(event)
         db.commit()
@@ -45,12 +46,32 @@ def is_self_trigger(payload: dict, bot_username: str) -> bool:
     return sender_login == bot_username
 
 
-def get_context_from_header(authorization: str) -> tuple[int, int]:
-    """Extract instance and account IDs from Authorization header."""
+def get_signing_key(db: Session) -> str:
+    """Get webhook signing key from system config."""
+    config = db.query(SystemConfig).first()
+    if config and config.webhook_signing_key:
+        return config.webhook_signing_key
+    # Fallback to environment variable
+    import os
+    return os.getenv("WEBHOOK_SIGNING_KEY", "default-signing-key-change-me")
+
+
+def get_context_from_header(authorization: str, db: Session) -> tuple[int, int]:
+    """Extract instance and account IDs from Authorization header with signature validation."""
     if not authorization or not authorization.startswith("Basic "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     encoded = authorization.replace("Basic ", "")
-    return decode_user_context(encoded)
+
+    # Get signing key
+    signing_key = get_signing_key(db)
+
+    # Decode and validate
+    instance_id, account_id = decode_user_context(encoded, signing_key)
+
+    if instance_id == 0 or account_id == 0:
+        raise HTTPException(status_code=401, detail="Invalid auth payload or signature")
+
+    return instance_id, account_id
 
 
 @router.post("/gitea")
@@ -75,11 +96,15 @@ async def receive_gitea_webhook(
     action = payload.get("action", "unknown")
     logger.info(f"Event: {event_type}, Action: {action}")
 
-    # Get context from Authorization header
+    # Get context from Authorization header with signature validation
+    db_auth = SessionLocal()
     try:
-        instance_id, account_id = get_context_from_header(authorization)
+        instance_id, account_id = get_context_from_header(authorization, db_auth)
     except HTTPException:
+        db_auth.close()
         raise
+    finally:
+        db_auth.close()
 
     # Quick validation - return immediately if invalid
     db = SessionLocal()

@@ -26,13 +26,13 @@ def webhook_client(db_session):
     return {"instance": instance, "account": account}
 
 def test_webhook_receiver_signature_fail(webhook_client, client):
-    # Malformed context (should now return 401 via get_context_from_header or handled in receiver)
+    # Malformed context (should return 401 with new signature validation)
     payload = {"action": "created", "comment": {"id": 1, "body": "hello"}}
-    headers = {"X-Gitea-Event": "issue_comment", "Authorization": "Basic MQ=="} # encoded '1' -> invalid context
-    
+    headers = {"X-Gitea-Event": "issue_comment", "Authorization": "Basic MQ=="} # encoded '1' -> invalid JSON context
+
     response = client.post("/webhook/gitea", json=payload, headers=headers)
-    # When context is (0,0), it doesn't find account and returns 200 (skipped)
-    assert response.status_code == 200
+    # With new signature validation, invalid auth returns 401
+    assert response.status_code == 401
 
 @pytest.mark.asyncio
 async def test_webhook_processor_routing(mocker, db_session, webhook_client):

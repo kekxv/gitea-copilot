@@ -1,47 +1,36 @@
 {% extends "base.html" %}
-{% block title %}管理两步验证 - GiteaCopilot{% endblock %}
+{% block title %}管理两步验证{% endblock %}
 
 {% block content %}
-<div class="card">
+<div class="card-hero">
     <div class="card-header">
-        <h2>管理两步验证</h2>
-        <p class="text-muted">当前账号：{{ admin_username }}</p>
+        <h2>两步验证</h2>
+        <p>{{ admin_username }}</p>
     </div>
-
-    {% if totp_enabled %}
-    <div class="alert alert-success">
-        <strong>两步验证已启用</strong>
-        <p>每次登录都需要输入 TOTP 验证码。</p>
-    </div>
-
-    {% if error %}
-    <div class="alert alert-error">{{ error }}</div>
-    {% endif %}
-
-    <div class="card-section">
-        <h4>关闭两步验证</h4>
-        <p class="text-muted">关闭后登录将不再需要验证码，请确认操作。</p>
-
+    <div style="padding: 1.5rem;">
+        {% if totp_enabled %}
+        <div class="alert alert-success">
+            <strong>已启用</strong> - 每次登录需验证码
+        </div>
+        {% if error %}
+        <div class="alert alert-error">{{ error }}</div>
+        {% endif %}
         <form action="/admin/totp/disable" method="post">
             <div class="form-group">
-                <label for="otp_code">输入当前验证码以确认</label>
-                <input type="text" id="otp_code" name="otp_code" required placeholder="6位数字验证码" maxlength="6" pattern="\d{6}">
+                <label>输入验证码关闭</label>
+                <input type="text" name="otp_code" required placeholder="6位验证码" maxlength="6">
             </div>
-
-            <button type="submit" class="btn btn-danger">关闭两步验证</button>
+            <button type="submit" class="btn btn-danger btn-block">关闭两步验证</button>
         </form>
-    </div>
-    {% else %}
-    <div class="alert alert-warning">
-        <strong>两步验证未启用</strong>
-        <p>建议启用两步验证以提高账号安全性。</p>
-    </div>
-
-    <a href="/admin/totp" class="btn btn-primary">启用两步验证</a>
-    {% endif %}
-
-    <div class="mt-3">
-        <a href="/admin/dashboard" class="btn btn-outline">返回</a>
+        {% else %}
+        <div class="alert alert-warning">
+            <strong>未启用</strong> - 建议开启提高安全性
+        </div>
+        <a href="/admin/totp" class="btn btn-primary btn-block">启用两步验证</a>
+        {% endif %}
+        <div class="mt-2">
+            <a href="/admin/dashboard" class="btn btn-outline btn-block">返回</a>
+        </div>
     </div>
 </div>
 {% endblock %}

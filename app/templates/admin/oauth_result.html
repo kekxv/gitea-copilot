@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}OAuth 结果 - GiteaCopilot{% endblock %}
+{% block title %}授权结果{% endblock %}
 
 {% block content %}
 <div class="oauth-result-page">
@@ -7,33 +7,30 @@
     <div class="result-card result-success">
         <div class="result-icon">✓</div>
         <h2>授权成功</h2>
-        <p>已绑定账号：<strong>@{{ gitea_username }}</strong></p>
+        <p>已绑定: <strong>@{{ gitea_username }}</strong></p>
         {% if webhook_created %}
-        <p class="result-hint">已自动配置用户 Webhook，可接收所有仓库事件</p>
+        <p class="result-hint" style="color: var(--success);">Webhook 已配置</p>
         {% elif webhook_exists %}
-        <p class="result-hint">用户 Webhook 已存在，无需重复配置</p>
+        <p class="result-hint" style="color: var(--success);">Webhook 已存在</p>
         {% else %}
-        <p class="result-hint warning">Webhook 配置失败，请检查权限后重新授权</p>
+        <p class="result-hint warning">Webhook 配置失败，请检查权限</p>
         {% endif %}
-        <p class="result-tip">在任意仓库的 Issue/PR 中评论 <code>@{{ gitea_username }}</code> 即可触发 AI</p>
-
+        <p class="result-tip">评论 <code>@{{ gitea_username }}</code> 触发 AI</p>
         {% if is_admin %}
-        <a href="/admin/dashboard" class="btn btn-primary">返回管理面板</a>
+        <a href="/admin/dashboard" class="btn btn-primary btn-block">返回管理</a>
         {% else %}
-        <a href="/admin/login" class="btn btn-primary">登录管理</a>
+        <a href="/admin/login" class="btn btn-primary btn-block">登录管理</a>
         {% endif %}
     </div>
-
     {% else %}
     <div class="result-card result-error">
         <div class="result-icon">✕</div>
         <h2>授权失败</h2>
         <p>{{ error }}</p>
-
         {% if is_admin %}
-        <a href="/admin/dashboard" class="btn btn-primary">返回重试</a>
+        <a href="/admin/dashboard" class="btn btn-primary btn-block">返回重试</a>
         {% else %}
-        <a href="/admin/login" class="btn btn-primary">登录后重试</a>
+        <a href="/admin/login" class="btn btn-primary btn-block">登录重试</a>
         {% endif %}
     </div>
     {% endif %}

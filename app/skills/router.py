@@ -29,8 +29,11 @@ class SkillRouter:
             "标签": "label",
             "tag": "label",
             "review": "review",
+            "审核": "review",
             "审查": "review",
             "检查": "review",
+            "close": "close",
+            "关闭": "close",
         }
 
     def _load_config(self) -> Dict[str, Any]:
@@ -85,13 +88,14 @@ class SkillRouter:
         skill_name = self.classify_intent(intent)
         logger.info(f"Classified as skill: {skill_name}")
 
-        from .implementations import HelpSkill, LabelSkill, AnalyzeSkill, ReviewSkill
+        from .implementations import HelpSkill, LabelSkill, AnalyzeSkill, ReviewSkill, CloseSkill
 
         skill_map = {
             "help": HelpSkill,
             "label": LabelSkill,
             "analyze": AnalyzeSkill,
             "review": ReviewSkill,
+            "close": CloseSkill,
         }
 
         skill_class = skill_map.get(skill_name, AnalyzeSkill)

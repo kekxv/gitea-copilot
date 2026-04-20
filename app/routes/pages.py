@@ -210,15 +210,19 @@ async def admin_dashboard(request: Request, db: Session = Depends(get_db)):
             "webhook_id": account.webhook_id
         })
 
-    # Construct callback URL
-    scheme = request.url.scheme
-    host = request.url.hostname or "localhost"
-    port = request.url.port
-    if port and port not in (80, 443):
-        base_url = f"{scheme}://{host}:{port}"
+    # Construct callback URL - use configured host_url or fallback to request
+    if config.host_url:
+        base_url = config.host_url.rstrip("/")
     else:
-        base_url = f"{scheme}://{host}"
+        scheme = request.url.scheme
+        host = request.url.hostname or "localhost"
+        port = request.url.port
+        if port and port not in (80, 443):
+            base_url = f"{scheme}://{host}:{port}"
+        else:
+            base_url = f"{scheme}://{host}"
     callback_url = base_url + "/oauth/callback"
+    webhook_url = base_url + "/webhook/gitea"
 
     return render(request, "admin/dashboard.html", {
         "admin_username": admin.username,
@@ -228,6 +232,7 @@ async def admin_dashboard(request: Request, db: Session = Depends(get_db)):
         "instances": instance_data,
         "accounts": account_data,
         "callback_url": callback_url,
+        "webhook_url": webhook_url,
         "bot_username": accounts[0].gitea_username if accounts else "your-account"
     })
 
@@ -364,6 +369,8 @@ async def admin_totp_disable(
 @router.post("/admin/config")
 async def admin_config_update(
     request: Request,
+    host_url: str = Form(default=""),
+    webhook_signing_key: str = Form(default=""),
     llm_base_url: str = Form(default="https://api.openai.com/v1"),
     llm_api_key: str = Form(default=""),
     llm_model: str = Form(default="gpt-4o-mini"),
@@ -372,6 +379,7 @@ async def admin_config_update(
     ai_max_tokens: int = Form(default=8000),
     ai_context_limit: int = Form(default=50000),
     clear_api_key: str = Form(default=""),
+    generate_new_signing_key: str = Form(default=""),
     db: Session = Depends(get_db)
 ):
     admin = get_admin_from_token(request, db)
@@ -379,6 +387,18 @@ async def admin_config_update(
         return RedirectResponse(url="/admin/login")
 
     config = get_system_config(db)
+
+    # Host URL for callback
+    config.host_url = host_url.strip() if host_url.strip() else None
+
+    # Webhook signing key
+    if generate_new_signing_key:
+        from ..gitea import generate_signing_key
+        config.webhook_signing_key = generate_signing_key()
+    elif webhook_signing_key.strip():
+        config.webhook_signing_key = webhook_signing_key.strip()
+
+    # LLM config
     config.llm_base_url = llm_base_url
     config.llm_model = llm_model
     config.copilot_docs_limit = copilot_docs_limit
@@ -394,7 +414,7 @@ async def admin_config_update(
 
     db.commit()
 
-    return RedirectResponse(url="/admin/dashboard", status_code=303)
+    return RedirectResponse(url="/admin/dashboard#config", status_code=303)
 
 
 @router.get("/admin/logout")
@@ -488,14 +508,18 @@ async def oauth_redirect(
     if not instance:
         return RedirectResponse(url="/admin/dashboard")
 
-    # Use fixed callback URL
-    scheme = request.url.scheme
-    host = request.url.hostname or "localhost"
-    port = request.url.port
-    if port and port not in (80, 443):
-        base_url = f"{scheme}://{host}:{port}"
+    # Get base URL from config or request
+    config = get_system_config(db)
+    if config.host_url:
+        base_url = config.host_url.rstrip("/")
     else:
-        base_url = f"{scheme}://{host}"
+        scheme = request.url.scheme
+        host = request.url.hostname or "localhost"
+        port = request.url.port
+        if port and port not in (80, 443):
+            base_url = f"{scheme}://{host}:{port}"
+        else:
+            base_url = f"{scheme}://{host}"
     redirect_uri = base_url + "/oauth/callback"
 
     state = gitea_auth.create_oauth_state(instance_id, redirect_uri)
@@ -535,14 +559,18 @@ async def oauth_callback(
         })
 
     try:
-        # Use fixed callback URL for token exchange
-        scheme = request.url.scheme
-        host = request.url.hostname or "localhost"
-        port = request.url.port
-        if port and port not in (80, 443):
-            base_url = f"{scheme}://{host}:{port}"
+        # Get base URL from config or request
+        config = get_system_config(db)
+        if config.host_url:
+            base_url = config.host_url.rstrip("/")
         else:
-            base_url = f"{scheme}://{host}"
+            scheme = request.url.scheme
+            host = request.url.hostname or "localhost"
+            port = request.url.port
+            if port and port not in (80, 443):
+                base_url = f"{scheme}://{host}:{port}"
+            else:
+                base_url = f"{scheme}://{host}"
         redirect_uri = base_url + "/oauth/callback"
 
         token_data = await gitea_auth.exchange_code_for_token(instance, code, redirect_uri)
@@ -565,7 +593,10 @@ async def oauth_callback(
         # Create user-level webhook (receives events from all repos)
         client = GiteaClient(instance.url, access_token)
         webhook_url = base_url + "/webhook/gitea"
-        auth_header = encode_user_context(instance.id, account.id)
+
+        # Get signing key for webhook auth
+        signing_key = config.webhook_signing_key or "default-signing-key"
+        auth_header = encode_user_context(instance.id, account.id, signing_key)
 
         webhook_created = False
         if not account.webhook_id:
