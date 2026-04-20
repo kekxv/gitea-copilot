@@ -4,6 +4,33 @@
 
 **项目地址**: [github.com/kekxv/gitea-copilot](https://github.com/kekxv/gitea-copilot)
 
+## ⚙️ 使用教程
+
+### 1. 首页
+首页的项目介绍
+
+![Home](assets/home.png)
+
+### 2. 管理界面设置
+后台的设置页面，支持：host、webhook签名密钥、AI相关设置(openai 接口)
+
+![Setting](assets/setting.png)
+
+### 3. 注册gitea实例
+通过添加gitea的应用，绑定到当前项目
+
+![Reg Gitea](assets/reg-gitea.png)
+
+### 4. 授权帐号
+通过授权帐号，让对应帐号支持项目功能
+
+![Admin](assets/admin.png)
+
+### 5. 安全设置
+支持修改密码，以及启用totp功能
+
+![Safe](assets/safe.png)
+
 ## 🌟 核心功能展示
 
 ### 1. 🔍 专业代码审查 (Code Review)
