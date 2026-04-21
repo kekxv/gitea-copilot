@@ -81,22 +81,6 @@ class EventProcessor:
             logger.info("Mention is inside a quote/reference block, skipping")
             return
 
-        # Check sender's repository access permission (need write/admin)
-        owner, repo = owner_repo.split("/", 1)
-        if sender:
-            # Owner always has access
-            if sender == owner:
-                logger.info(f"User '{sender}' is the repository owner, granting access")
-                has_access = True
-            else:
-                logger.debug(f"Checking write/admin permission for user '{sender}' on {owner}/{repo}")
-                has_access = await self.client.check_user_repo_access(owner, repo, sender)
-                logger.debug(f"Permission check result: has_access={has_access}")
-            
-            if not has_access:
-                logger.warning(f"User {sender} lacks write/admin permission for {owner}/{repo}, skipping")
-                return
-
         logger.info(f"Bot mentioned! Processing...")
 
         intents = self._extract_intents(comment_body)
@@ -207,15 +191,6 @@ class EventProcessor:
 
         owner, repo = owner_repo.split("/", 1)
 
-        # Check sender permission (need write/admin)
-        if sender:
-            logger.debug(f"Checking write/admin permission for user '{sender}' on {owner}/{repo}")
-            has_access = await self.client.check_user_repo_access(owner, repo, sender)
-            logger.debug(f"Permission check result: has_access={has_access}")
-            if not has_access:
-                logger.warning(f"User {sender} lacks write/admin permission for {owner}/{repo}, skipping")
-                return
-
         intent = self._extract_intents(issue_body)
         logger.info(f"Extracted intents from issue body: {intent}")
 
@@ -238,7 +213,6 @@ class EventProcessor:
         """Process pull request event."""
         pr = payload.get("pull_request", {})
         repository = payload.get("repository", {})
-        sender = payload.get("sender", {}).get("login", "")
 
         owner_repo = repository.get("full_name", "")
         pr_number = pr.get("number")
@@ -255,15 +229,6 @@ class EventProcessor:
             return
 
         owner, repo = owner_repo.split("/", 1)
-
-        # Check sender permission (need write/admin)
-        if sender:
-            logger.debug(f"Checking write/admin permission for user '{sender}' on {owner}/{repo}")
-            has_access = await self.client.check_user_repo_access(owner, repo, sender)
-            logger.debug(f"Permission check result: has_access={has_access}")
-            if not has_access:
-                logger.warning(f"User {sender} lacks write/admin permission for {owner}/{repo}, skipping")
-                return
 
         intent = self._extract_intents(pr_body)
         logger.info(f"Extracted intents from PR body: {intent}")
