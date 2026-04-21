@@ -88,6 +88,11 @@ class LLMClient:
                     max_tokens=max_tokens
                 )
 
+                # Safety check for response.choices
+                if not response.choices:
+                    logger.error(f"API returned no choices: response={response}")
+                    return "AI 调用出错: API 返回空响应", tool_calls_log
+
                 message = response.choices[0].message
 
                 # Log AI response details
@@ -189,7 +194,12 @@ class LLMClient:
                 temperature=temperature
             )
 
-            content = response.choices[0].message.content
+            # Safety check for response.choices
+            if not response.choices:
+                logger.error(f"API returned no choices: response={response}")
+                return "LLM API 返回空响应"
+
+            content = response.choices[0].message.content or ""
             logger.info(f"LLM response received: {len(content)} chars")
             return content
 
@@ -201,7 +211,7 @@ class LLMClient:
 def get_llm_client_from_config(db_session=None) -> LLMClient:
     """Get LLM client configured from SystemConfig or environment.
 
-    Priority: SystemConfig > LLM_* env vars > OPENAI_* env vars > defaults
+    Priority: non-empty SystemConfig > LLM_* env vars > OPENAI_* env vars > defaults
     """
     base_url = None
     api_key = None
@@ -213,24 +223,36 @@ def get_llm_client_from_config(db_session=None) -> LLMClient:
             from ..models import SystemConfig
             config = db_session.query(SystemConfig).first()
             if config:
-                base_url = config.llm_base_url
-                # Only use db api_key if it's non-empty
+                # Only use db config if it's explicitly set (non-empty)
+                if config.llm_base_url and config.llm_base_url.strip():
+                    base_url = config.llm_base_url.strip()
                 if config.llm_api_key and config.llm_api_key.strip():
                     api_key = config.llm_api_key.strip()
-                model = config.llm_model
+                if config.llm_model and config.llm_model.strip():
+                    model = config.llm_model.strip()
                 logger.info(f"LLM config from DB: base_url={base_url}, model={model}, has_key={bool(api_key)}")
         except Exception as e:
             logger.warning(f"Failed to get config from DB: {e}")
 
-    # Fall back to environment variables if not set
+    # Fall back to environment variables if not set from DB
     # Priority: LLM_* > OPENAI_*
-    env_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY", "")
-    if not api_key and env_key.strip():
-        api_key = env_key.strip()
+    env_base_url = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+    env_api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+    env_model = os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL")
+
+    # Use env vars if DB config was empty/None
+    if not base_url and env_base_url:
+        base_url = env_base_url
+    if not api_key and env_api_key and env_api_key.strip():
+        api_key = env_api_key.strip()
+    if not model and env_model:
+        model = env_model
+
+    # Final fallback to defaults if nothing is set
     if not base_url:
-        base_url = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        base_url = "https://api.openai.com/v1"
     if not model:
-        model = os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        model = "gpt-4o-mini"
 
     return LLMClient(base_url=base_url, api_key=api_key, model=model)
 

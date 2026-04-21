@@ -323,9 +323,13 @@ class GiteaClient(BaseGitClient):
             if name in label_map:
                 label_ids.append(label_map[name])
             else:
-                # Create new label
+                # Create new label with a default color
                 try:
-                    new_label = await self._request("POST", f"/repos/{owner}/{repo}/labels", data={"name": name})
+                    # Generate a simple color based on label name hash for variety
+                    import hashlib
+                    hash_val = int(hashlib.md5(name.encode()).hexdigest()[:6], 16)
+                    color = f"#{(hash_val % 0xFFFFFF):06x}"
+                    new_label = await self._request("POST", f"/repos/{owner}/{repo}/labels", data={"name": name, "color": color})
                     label_ids.append(new_label["id"])
                 except Exception as e:
                     logger.warning(f"Failed to create label {name}: {e}")
@@ -412,6 +416,14 @@ class GiteaClient(BaseGitClient):
         url = f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews"
         return await self._request("POST", url, data=data)
 
+    async def get_pull_review_comments(self, owner: str, repo: str, pr_number: int, review_id: int) -> List[Dict]:
+        """Get comments for a specific PR review."""
+        return await self._request("GET", f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews/{review_id}/comments")
+
+    async def get_all_pull_comments(self, owner: str, repo: str, pr_number: int) -> List[Dict]:
+        """Get all comments for a PR (includes both issue comments and review comments)."""
+        return await self._request("GET", f"/repos/{owner}/{repo}/pulls/{pr_number}/comments")
+
     async def get_pull_request_comment(
         self,
         owner: str,
@@ -478,3 +490,55 @@ class GiteaClient(BaseGitClient):
     async def get_issue_comments(self, owner: str, repo: str, issue_number: int) -> List[Dict]:
         """Get all comments for an issue or pull request."""
         return await self._request("GET", f"/repos/{owner}/{repo}/issues/{issue_number}/comments")
+
+    # ============ Reaction Operations ============
+
+    async def get_comment_reactions(self, owner: str, repo: str, comment_id: int) -> List[Dict]:
+        """Get reactions for an issue/PR comment."""
+        return await self._request("GET", f"/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions")
+
+    async def add_comment_reaction(self, owner: str, repo: str, comment_id: int, reaction: str) -> Dict:
+        """Add a reaction to an issue/PR comment.
+
+        Args:
+            reaction: Emoji name like 'eyes', '+1', 'heart', etc.
+        """
+        return await self._request("POST", f"/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions", data={"content": reaction})
+
+    async def get_issue_reactions(self, owner: str, repo: str, issue_number: int) -> List[Dict]:
+        """Get reactions for an issue/PR."""
+        return await self._request("GET", f"/repos/{owner}/{repo}/issues/{issue_number}/reactions")
+
+    async def add_issue_reaction(self, owner: str, repo: str, issue_number: int, reaction: str) -> Dict:
+        """Add a reaction to an issue/PR.
+
+        Args:
+            reaction: Emoji name like 'eyes', '+1', 'heart', etc.
+        """
+        return await self._request("POST", f"/repos/{owner}/{repo}/issues/{issue_number}/reactions", data={"content": reaction})
+
+    async def has_bot_reaction(self, owner: str, repo: str, issue_number: int, comment_id: Optional[int], reaction: str, bot_username: str) -> bool:
+        """Check if bot has already added a specific reaction.
+
+        Args:
+            issue_number: Issue/PR number
+            comment_id: Comment ID (None for issue body reactions)
+            reaction: Reaction content to check (e.g., 'eyes')
+            bot_username: Bot's Gitea username to match
+
+        Returns:
+            True if bot has this reaction on the item
+        """
+        if comment_id:
+            reactions = await self.get_comment_reactions(owner, repo, comment_id)
+        else:
+            reactions = await self.get_issue_reactions(owner, repo, issue_number)
+
+        # Handle None or empty responses
+        if not reactions:
+            return False
+
+        for r in reactions:
+            if r.get("content") == reaction and r.get("user", {}).get("login") == bot_username:
+                return True
+        return False

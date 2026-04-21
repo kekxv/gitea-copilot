@@ -93,7 +93,12 @@ async def process_account_notifications(account: GiteaAccount, instance: GiteaIn
 
 
 async def handle_notification(note: dict, client: GiteaClient, account: GiteaAccount, instance: GiteaInstance, db: Session):
-    """Process a single notification using the 'catch-up' strategy."""
+    """Process a single notification using reactions-based tracking.
+
+    Uses 'eyes' reaction to mark processed items:
+    - Before processing: check if bot already has 'eyes' reaction → skip if yes
+    - After processing: add 'eyes' reaction to the processed comment/issue
+    """
     note_id = note.get("id")
     subject = note.get("subject", {})
     subject_type = subject.get("type")  # "Issue", "PullRequest"
@@ -136,51 +141,59 @@ async def handle_notification(note: dict, client: GiteaClient, account: GiteaAcc
         # 3. Fetch issue/PR details
         issue = await client.get_issue(owner, repo_name, issue_number)
 
-        # 4. Find the last time the bot replied
-        comments.sort(key=lambda x: x.get("created_at", ""))
-
-        last_bot_reply_time = None
-        for comment in reversed(comments):
-            if comment.get("user", {}).get("login") == bot_username:
-                last_bot_reply_time = comment.get("created_at")
-                logger.info(f"Last bot reply at {last_bot_reply_time}")
-                break
-
-        # 5. Collect all new @mentions after the last bot reply
+        # 4. Collect all @mentions that haven't been processed (no 'eyes' reaction)
         to_process = []
 
-        # Check issue body
-        if not last_bot_reply_time or issue.get("created_at") > last_bot_reply_time:
-            issue_body = issue.get("body") or ""
-            if f"@{bot_username}" in issue_body:
-                logger.info(f"Found mention in issue/PR body")
-                # For PRs, use pull_request event type
-                # Gitea returns "Pull" or "PullRequest" for PRs, "Issue" for issues
+        # Check issue body for mentions
+        issue_body = issue.get("body") or ""
+        if f"@{bot_username}" in issue_body:
+            # Check if bot already processed this issue (has 'eyes' reaction on issue)
+            has_reaction = await client.has_bot_reaction(owner, repo_name, issue_number, None, "eyes", bot_username)
+            if not has_reaction:
+                logger.info(f"Found unprocessed mention in issue/PR body")
                 is_pr = subject_type in ["Pull", "PullRequest"] or issue.get("pull_request")
                 event_type = "pull_request" if is_pr else "issues"
                 to_process.append({
                     "type": event_type,
                     "ref": f"subject_{subject_type}_{issue_number}",
                     "item": issue,
-                    "sender": issue.get("user", {})
+                    "sender": issue.get("user", {}),
+                    "is_issue_body": True  # Mark as issue body for reaction placement
                 })
+            else:
+                logger.info(f"Issue body already processed (has eyes reaction)")
 
+        # Check comments for mentions
+        comments.sort(key=lambda x: x.get("created_at", ""))
         for comment in comments:
-            created_at = comment.get("created_at")
             comment_user = comment.get("user", {}).get("login", "")
             comment_body = comment.get("body") or ""
+            comment_id = comment.get("id")
 
-            if last_bot_reply_time and created_at <= last_bot_reply_time:
+            # Skip bot's own comments (also check hooray reaction as extra protection)
+            if comment_user == bot_username:
+                continue
+
+            # Extra check: skip if comment has hooray reaction from bot (bot's posted comment)
+            has_hooray = await client.has_bot_reaction(owner, repo_name, issue_number, comment_id, "hooray", bot_username)
+            if has_hooray:
+                logger.info(f"Comment #{comment_id} is bot's posted comment (has hooray reaction), skipping")
                 continue
 
             if f"@{bot_username}" in comment_body:
-                logger.info(f"Found mention in comment by @{comment_user} at {created_at}")
-                to_process.append({
-                    "type": "issue_comment",
-                    "ref": f"comment_{comment.get('id')}",
-                    "item": comment,
-                    "sender": comment.get("user", {})
-                })
+                # Check if bot already processed this comment (has 'eyes' reaction)
+                has_eyes = await client.has_bot_reaction(owner, repo_name, issue_number, comment_id, "eyes", bot_username)
+                if not has_eyes:
+                    logger.info(f"Found unprocessed mention in comment #{comment_id} by @{comment_user}")
+                    to_process.append({
+                        "type": "issue_comment",
+                        "ref": f"comment_{comment_id}",
+                        "item": comment,
+                        "sender": comment.get("user", {}),
+                        "comment_id": comment_id  # For adding reaction after processing
+                    })
+                else:
+                    logger.info(f"Comment #{comment_id} already processed (has eyes reaction)")
 
         if not to_process:
             logger.info(f"No new mentions for @{bot_username} found in thread #{issue_number}")
@@ -188,20 +201,41 @@ async def handle_notification(note: dict, client: GiteaClient, account: GiteaAcc
 
         logger.info(f"Found {len(to_process)} new mentions to process in thread #{issue_number}")
 
-        # 6. Process each mention
+        # 5. Batch add 'eyes' reactions BEFORE processing any of them
+        # This prevents re-processing by next poll if AI takes long time
+        for task in to_process:
+            ref_id = f"acc{account.id}_{task['ref']}"
+            # Skip if already processed (db check)
+            existing = db.query(ProcessedEvent).filter(
+                ProcessedEvent.event_type == task["type"],
+                ProcessedEvent.reference_id == ref_id
+            ).first()
+            if existing:
+                continue
+            try:
+                if task.get("is_issue_body"):
+                    await client.add_issue_reaction(owner, repo_name, issue_number, "eyes")
+                    logger.info(f"Added eyes reaction to issue #{issue_number}")
+                elif task.get("comment_id"):
+                    await client.add_comment_reaction(owner, repo_name, task["comment_id"], "eyes")
+                    logger.info(f"Added eyes reaction to comment #{task['comment_id']}")
+            except Exception as e:
+                logger.warning(f"Failed to add eyes reaction: {e}")
+
+        # 6. Now process each mention (all have eyes reactions already)
         processor = EventProcessor(instance, account, db)
         for task in to_process:
             event_type = task["type"]
             ref_id = f"acc{account.id}_{task['ref']}"
 
-            # Idempotency check
+            # Idempotency check (secondary safety)
             existing = db.query(ProcessedEvent).filter(
                 ProcessedEvent.event_type == event_type,
                 ProcessedEvent.reference_id == ref_id
             ).first()
 
             if existing:
-                logger.info(f"Skipping already processed: {ref_id}")
+                logger.info(f"Skipping already processed (db): {ref_id}")
                 continue
 
             logger.info(f"Processing mention: {ref_id}")
@@ -215,14 +249,11 @@ async def handle_notification(note: dict, client: GiteaClient, account: GiteaAcc
 
             if event_type == "issue_comment":
                 payload["comment"] = task["item"]
-                # For PR comments, set pull_request field to indicate it's a PR
-                # Gitea uses Issue API for PRs, but we need to distinguish
                 if subject_type in ["Pull", "PullRequest"] or issue.get("pull_request"):
                     payload["pull_request"] = issue
                 else:
                     payload["issue"] = issue
             else:
-                # For PRs (Pull/PullRequest) use pull_request payload
                 if subject_type in ["Issue"]:
                     payload["issue"] = task["item"]
                 else:
@@ -234,6 +265,18 @@ async def handle_notification(note: dict, client: GiteaClient, account: GiteaAcc
                 db.commit()
 
                 await processor.process(event_type, payload, db)
+
+                # Add hooray reaction to trigger comment/issue to indicate "processing completed"
+                try:
+                    if task.get("comment_id"):
+                        await client.add_comment_reaction(owner, repo_name, task["comment_id"], "hooray")
+                        logger.info(f"Added hooray reaction to comment #{task['comment_id']} (completed)")
+                    elif task.get("is_issue_body"):
+                        await client.add_issue_reaction(owner, repo_name, issue_number, "hooray")
+                        logger.info(f"Added hooray reaction to issue #{issue_number} (completed)")
+                except Exception as e:
+                    logger.warning(f"Failed to add hooray reaction: {e}")
+
             except Exception as e:
                 logger.error(f"Error processing mention {ref_id}: {e}")
                 db.rollback()

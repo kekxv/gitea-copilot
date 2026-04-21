@@ -99,19 +99,29 @@ class EventProcessor:
 
         logger.info(f"Bot mentioned! Processing...")
 
-        intent = self._extract_intent(comment_body)
-        logger.info(f"Extracted intent: '{intent}'")
+        intents = self._extract_intents(comment_body)
+        logger.info(f"Extracted intents: {intents}")
 
-        response = await self._route_to_skill(intent, issue, comment, payload, db)
-        logger.info(f"AI response generated: {response[:100] if response else 'None'}...")
+        responses = []
+        for intent in intents:
+            response = await self._route_to_skill(intent, issue, comment, payload, db)
+            logger.info(f"Intent '{intent}' response: {response[:100] if response else 'None'}...")
+            if response and response.strip():
+                responses.append(response)
 
-        if response and response.strip():
-            # Remove any @mentions of self from the response
-            response = self._remove_self_mentions(response)
-            logger.info(f"Posting comment to Gitea...")
+        # Combine all non-empty responses into one comment
+        if responses:
+            combined = "\n\n---\n\n".join(responses)
+            combined = self._remove_self_mentions(combined)
+            logger.info(f"Posting combined comment ({len(responses)} responses) to Gitea...")
             try:
-                result = await self.client.create_comment(owner, repo, issue_number, response)
-                logger.info(f"Comment posted successfully: {result.get('id', 'unknown')}")
+                result = await self.client.create_comment(owner, repo, issue_number, combined)
+                comment_id = result.get("id")
+                logger.info(f"Comment posted successfully: {comment_id}")
+                # Add hooray reaction to mark this comment as posted by bot
+                if comment_id:
+                    await self.client.add_comment_reaction(owner, repo, comment_id, "hooray")
+                    logger.info(f"Added hooray reaction to comment {comment_id}")
             except Exception as e:
                 logger.error(f"Failed to post comment: {e}", exc_info=True)
 
@@ -206,12 +216,23 @@ class EventProcessor:
                 logger.warning(f"User {sender} lacks write/admin permission for {owner}/{repo}, skipping")
                 return
 
-        intent = self._extract_intent(issue_body)
-        response = await self._route_to_skill(intent, issue, None, payload, db)
+        intent = self._extract_intents(issue_body)
+        logger.info(f"Extracted intents from issue body: {intent}")
 
-        if response:
-            response = self._remove_self_mentions(response)
-            await self.client.create_comment(owner, repo, issue_number, response)
+        responses = []
+        for i in intent:
+            response = await self._route_to_skill(i, issue, None, payload, db)
+            if response and response.strip():
+                responses.append(response)
+
+        if responses:
+            combined = "\n\n---\n\n".join(responses)
+            combined = self._remove_self_mentions(combined)
+            result = await self.client.create_comment(owner, repo, issue_number, combined)
+            comment_id = result.get("id")
+            if comment_id:
+                await self.client.add_comment_reaction(owner, repo, comment_id, "hooray")
+                logger.info(f"Added hooray reaction to comment {comment_id}")
 
     async def _process_pull_request(self, payload: Dict, db: Session):
         """Process pull request event."""
@@ -244,23 +265,92 @@ class EventProcessor:
                 logger.warning(f"User {sender} lacks write/admin permission for {owner}/{repo}, skipping")
                 return
 
-        intent = self._extract_intent(pr_body)
-        response = await self._route_to_skill(intent, pr, None, payload, db)
+        intent = self._extract_intents(pr_body)
+        logger.info(f"Extracted intents from PR body: {intent}")
 
-        if response:
-            response = self._remove_self_mentions(response)
-            await self.client.create_comment(owner, repo, pr_number, response)
+        responses = []
+        for i in intent:
+            response = await self._route_to_skill(i, pr, None, payload, db)
+            if response and response.strip():
+                responses.append(response)
 
-    def _extract_intent(self, text: str) -> str:
-        """Extract the intent from bot mention."""
-        mention_start = text.find(f"@{self.bot_username}")
-        if mention_start == -1:
-            return ""
+        if responses:
+            combined = "\n\n---\n\n".join(responses)
+            combined = self._remove_self_mentions(combined)
+            result = await self.client.create_comment(owner, repo, pr_number, combined)
+            comment_id = result.get("id")
+            if comment_id:
+                await self.client.add_comment_reaction(owner, repo, comment_id, "hooray")
+                logger.info(f"Added hooray reaction to comment {comment_id}")
 
-        mention_end = mention_start + len(self.bot_username) + 1
-        remaining = text[mention_end:].strip()
+    def _extract_intents(self, text: str) -> list[str]:
+        """Extract all unique intents from bot mentions.
 
-        return remaining
+        Deduplicates by first keyword, preserves order and full intent text.
+
+        Examples:
+        - "@bot review @bot review @bot label bug" -> ["review", "label bug"]
+        - "@bot help @bot help" -> ["help"]
+        """
+        import re
+        pattern = f"@{re.escape(self.bot_username)}\\s*"
+
+        intents = []
+        seen_keywords = set()
+
+        # Keyword groups that represent the same command
+        keyword_aliases = {
+            "help": ["help", "帮助", "?"],
+            "label": ["label", "标签", "tag"],
+            "review": ["review", "审核", "审查", "检查"],
+            "close": ["close", "关闭"],
+            "open": ["open", "打开", "reopen", "重开"],
+        }
+
+        # Build reverse lookup: keyword -> canonical name
+        alias_to_canonical = {}
+        for canonical, aliases in keyword_aliases.items():
+            for alias in aliases:
+                alias_to_canonical[alias.lower()] = canonical
+
+        # Find all mentions and extract intents after them
+        pos = 0
+        while True:
+            match = re.search(pattern, text[pos:])
+            if not match:
+                break
+
+            # Start of intent is right after the mention
+            intent_start = pos + match.end()
+
+            # Find end of intent (next mention or end of text)
+            next_mention = re.search(pattern, text[intent_start:])
+            if next_mention:
+                intent_end = intent_start + next_mention.start()
+            else:
+                intent_end = len(text)
+
+            intent_text = text[intent_start:intent_end].strip()
+            pos = intent_start
+
+            if not intent_text:
+                continue
+
+            # Get first word as keyword
+            words = intent_text.split()
+            first_word = words[0].lower() if words else ""
+
+            if not first_word:
+                continue
+
+            # Normalize keyword through alias mapping
+            canonical = alias_to_canonical.get(first_word, first_word)
+
+            if canonical not in seen_keywords:
+                seen_keywords.add(canonical)
+                intents.append(intent_text)
+
+        return intents
 
     async def _route_to_skill(
         self,
