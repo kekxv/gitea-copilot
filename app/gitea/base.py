@@ -6,6 +6,11 @@ class BaseGitClient(ABC):
     """Abstract base class for Git platform clients (Gitea, GitHub, GitLab)."""
 
     @abstractmethod
+    async def get_current_user(self) -> Dict[str, Any]:
+        """Get current authenticated user info."""
+        pass
+
+    @abstractmethod
     async def get_repo(self, owner: str, repo: str) -> Dict[str, Any]:
         """Get repository information."""
         pass

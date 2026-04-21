@@ -39,7 +39,12 @@ REVIEW_TOOLS = [
                     },
                     "summary": {
                         "type": "string",
-                        "description": "审查总结。必须包含明确的结论：如发现问题请详细说明问题类型；若无问题写'LGTM'或'此部分代码无明显缺陷'。"
+                        "description": "审查总结。使用 Markdown 格式撰写。必须包含明确的结论：如发现问题请详细说明问题类型；若无问题写'LGTM'或'此部分代码无明显缺陷'。"
+                    },
+                    "event": {
+                        "type": "string",
+                        "description": "审核状态。COMMENT=仅评论，REQUEST_CHANGES=需要修改，APPROVED=同意合并。",
+                        "enum": ["COMMENT", "REQUEST_CHANGES", "APPROVED"]
                     }
                 },
                 "required": ["comments", "summary"]
@@ -102,8 +107,9 @@ def get_review_system_prompt(total_chunks: int = 1) -> str:
 
 ### 总结要求（必须填写）：
 - summary 字段是**必填**的，不能省略
-- 若发现问题：详细说明问题类型和数量
-- 若无问题：必须写 **"LGTM"** 或 **"此部分代码无明显缺陷"**
+- **使用 Markdown 格式**：标题、列表、加粗等
+- 若发现问题：详细说明问题类型和数量，使用 REQUEST_CHANGES
+- 若无问题：必须写 **"LGTM"** 或 **"此部分代码无明显缺陷"**，使用 COMMENT
 - 不能留空或不填写 summary
 
 ### 评审准则：

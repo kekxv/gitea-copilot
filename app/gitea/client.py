@@ -100,8 +100,9 @@ class GiteaClient(BaseGitClient):
                 # We could try one more refresh here if needed
 
             if response.status_code not in (200, 201, 204, 205):
-                logger.error(f"Gitea API error: status {response.status_code} on {path}")
-                raise Exception(f"Gitea API error: {response.status_code}")
+                error_body = response.text[:500] if response.text else ""
+                logger.error(f"Gitea API error: status {response.status_code} on {path} | Body: {error_body}")
+                raise Exception(f"Gitea API error: {response.status_code} - {error_body}")
 
             if response.status_code == 204:
                 return {}
@@ -133,6 +134,10 @@ class GiteaClient(BaseGitClient):
             return response.text
 
     # ============ Repository Operations ============
+
+    async def get_current_user(self) -> Dict:
+        """Get current authenticated user info."""
+        return await self._request("GET", "/user")
 
     async def get_user_repos(self) -> List[Dict]:
         """Get list of repositories for the authenticated user."""

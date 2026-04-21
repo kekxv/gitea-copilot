@@ -21,10 +21,14 @@
 
 ![Reg Gitea](assets/reg-gitea.png)
 
+![Reg Gitea Token](assets/reg-gitea-token.png)
+
 ### 4. 授权帐号
 通过授权帐号，让对应帐号支持项目功能
 
 ![Admin](assets/admin.png)
+
+![Success](assets/success.png)
 
 ### 5. 安全设置
 支持修改密码，以及启用totp功能
@@ -35,6 +39,14 @@
 
 ### 1. 🔍 专业代码审查 (Code Review)
 深度分析 Pull Request 变更，提供精准到行的评审建议，涵盖逻辑缺陷、安全隐患及语义一致性检查。
+
+**审查事件类型**：
+- **COMMENT** - 仅发表评论，不阻止合并（适用于 LGTM 或一般建议）
+- **REQUEST_CHANGES** - 要求修改后才能合并（发现问题时使用）
+
+**安全限制**：
+- AI 无法直接批准合并（APPROVED 会被自动转换为 COMMENT）
+- Bot 不能对自己的 PR 发起 REQUEST_CHANGES（Gitea API 限制）
 
 | 审查总结 | 文件变动视图 |
 | :--- | :--- |
@@ -50,10 +62,28 @@
 
 ![Label Bug](assets/label-bug.png)
 
-### 4. 🛠️ 交互式帮助
+### 4. ✅ 快捷状态操作
+支持快速关闭或重新打开 Issue/PR：
+- `@机器人 close` - 关闭当前 Issue/PR
+- `@机器人 open` - 重新打开已关闭的 Issue/PR
+
+### 5. 🛠️ 交互式帮助
 随时获取支持的操作列表。
 
 ![Help](assets/help.png)
+
+## 📋 支持的命令
+
+在 Issue 或 PR 评论中 @机器人 并使用以下命令：
+
+| 命令 | 说明 | 示例 |
+| :--- | :--- | :--- |
+| `help` / `帮助` / `?` | 显示帮助信息 | `@机器人 help` |
+| `review` / `审核` / `审查` | 审查 PR 代码 | `@机器人 review` |
+| `label <标签>` | 添加标签 | `@机器人 label bug feature` |
+| `close` / `关闭` | 关闭 Issue/PR | `@机器人 close` |
+| `open` / `打开` / `重开` | 重新打开 Issue/PR | `@机器人 open` |
+| 直接提问 | 基于文档回答问题 | `@机器人 如何部署这个项目？` |
 
 ## 🚀 快速开始
 

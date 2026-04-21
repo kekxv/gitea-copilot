@@ -264,8 +264,16 @@ class ReviewSkill(BaseSkill):
             pr = await self.git_client.get_pull_request(owner, repo, pr_number)
             head_sha = pr.get("head", {}).get("sha")
             pr_title = pr.get("title", "")
+            pr_author = pr.get("user", {}).get("login", "")
             diff = await self.git_client.get_pull_request_diff(owner, repo, pr_number)
             if not diff: return "获取代码变更失败。"
+
+            # Check if bot is reviewing its own PR - cannot use REQUEST_CHANGES
+            current_user = await self.git_client.get_current_user()
+            current_username = current_user.get("login", "")
+            is_own_pr = pr_author == current_username
+            if is_own_pr:
+                logger.info(f"Bot ({current_username}) is reviewing own PR, REQUEST_CHANGES not allowed")
 
             # 2. Build Whitelist
             file_changes = self._parse_diff(diff)
@@ -276,6 +284,7 @@ class ReviewSkill(BaseSkill):
                 for l in file["lines"]:
                     if l.get("new_line") is not None: valid_lines[path]["new"].add(l["new_line"])
                     if l.get("old_line") is not None: valid_lines[path]["old"].add(l["old_line"])
+            logger.debug(f"📋 Valid lines for review: {dict((k, {'new': sorted(v['new']), 'old': sorted(v['old'])}) for k, v in valid_lines.items())}")
 
             # 3. Chunking
             chunks = []
@@ -291,6 +300,7 @@ class ReviewSkill(BaseSkill):
             from ..tools import REVIEW_TOOLS, get_review_system_prompt
             all_comments = []
             all_summaries = []
+            all_events = []  # Collect events from AI
             file_cache: Dict[str, str] = {}
             successfully_processed_chunks = 0
 
@@ -311,6 +321,12 @@ class ReviewSkill(BaseSkill):
                         if isinstance(raw_c, dict): raw_c = [raw_c]
 
                         logger.debug(f"📝 submit_review called with {len(raw_c or [])} comments")
+
+                        # Collect event from AI
+                        event = args.get("event", "COMMENT")
+                        all_events.append(event)
+                        logger.info(f"   AI event: {event}")
+
                         for c in (raw_c or []):
                             path, body = c.get("path"), c.get("body")
                             if not path or not body: continue
@@ -319,16 +335,21 @@ class ReviewSkill(BaseSkill):
                             nl = int(nl) if nl is not None else None
                             ol = int(ol) if ol is not None else None
 
-                            if path in valid_lines:
-                                if nl and nl in valid_lines[path]["new"]:
-                                    all_comments.append({"path": path, "new_position": nl, "old_position": None, "body": body})
-                                    logger.debug(f"   ✓ Comment on {path}:{nl} (new)")
-                                elif ol and ol in valid_lines[path]["old"]:
-                                    all_comments.append({"path": path, "new_position": None, "old_position": ol, "body": body})
-                                    logger.debug(f"   ✓ Comment on {path}:{ol} (old)")
-                                else:
-                                    all_summaries.append(f"**[{path}] 补充记录**: {body}")
-                                    logger.debug(f"   ⚠ Comment on {path} added to summary (line not in valid range)")
+                            # Check if path exists in valid_lines
+                            if path not in valid_lines:
+                                all_summaries.append(f"**[{path}] 补充记录**: {body}")
+                                logger.debug(f"   ⚠ Path {path} not in diff, added to summary")
+                                continue
+
+                            if nl and nl in valid_lines[path]["new"]:
+                                all_comments.append({"path": path, "new_position": nl, "old_position": None, "body": body})
+                                logger.debug(f"   ✓ Comment on {path}:{nl} (new)")
+                            elif ol and ol in valid_lines[path]["old"]:
+                                all_comments.append({"path": path, "new_position": None, "old_position": ol, "body": body})
+                                logger.debug(f"   ✓ Comment on {path}:{ol} (old)")
+                            else:
+                                all_summaries.append(f"**[{path}] 补充记录**: {body}")
+                                logger.debug(f"   ⚠ Comment on {path} (nl={nl}, ol={ol}) not in valid range, added to summary")
 
                         if args.get("summary"):
                             all_summaries.append(args["summary"])
@@ -359,26 +380,56 @@ class ReviewSkill(BaseSkill):
                 key = (c["path"], c["new_position"], c["old_position"], c["body"].strip())
                 if key not in seen_keys: unique_comments.append(c); seen_keys.add(key)
 
-            # Use AI's summary directly, no auto LGTM
+            # Use AI's summary directly
             summary_text = "\n\n".join(list(dict.fromkeys(all_summaries)))
             final_body = scrub(summary_text)
+
+            # Determine final event: intercept APPROVED -> COMMENT
+            # If any chunk requested changes, use REQUEST_CHANGES
+            # Otherwise use COMMENT (APPROVED forced to COMMENT)
+            # IMPORTANT: Cannot use REQUEST_CHANGES on own PR
+            if is_own_pr:
+                # Bot cannot reject its own PR, force to COMMENT
+                final_event = "COMMENT"
+                logger.info(f"Final event: COMMENT (own PR, cannot REQUEST_CHANGES)")
+            else:
+                normalized_events = []
+                for e in all_events:
+                    if e == "APPROVED":
+                        logger.warning(f"AI returned APPROVED, forcing to COMMENT")
+                        normalized_events.append("COMMENT")
+                    else:
+                        normalized_events.append(e)
+
+                if "REQUEST_CHANGES" in normalized_events:
+                    final_event = "REQUEST_CHANGES"
+                else:
+                    final_event = "COMMENT"
+
+                logger.info(f"Final event: {final_event}")
 
             # 6. Submit Unified Review
             api_comments = []
             for c in unique_comments:
-                api_comments.append({
+                api_c = {
                     "path": c["path"],
-                    "body": scrub(c["body"]),
-                    "new_position": c["new_position"],
-                    "old_position": c["old_position"]
-                })
+                    "body": scrub(c["body"])
+                }
+                # Only include position fields if they're not None
+                if c["new_position"] is not None:
+                    api_c["new_position"] = c["new_position"]
+                if c["old_position"] is not None:
+                    api_c["old_position"] = c["old_position"]
+                api_comments.append(api_c)
 
             await self.git_client.create_pull_request_review(
                 owner, repo, pr_number,
                 body=final_body,
                 comments=api_comments,
+                event=final_event,
                 commit_id=head_sha
             )
+            logger.info(f"Review submitted: event={final_event}, {len(api_comments)} comments")
             return "" 
 
         except Exception as e:
