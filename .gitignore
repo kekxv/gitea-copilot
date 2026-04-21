@@ -45,3 +45,4 @@ Thumbs.db
 .vscode/
 .idea/
 .gemini-clipboard
+gitea.swagger.v1.json

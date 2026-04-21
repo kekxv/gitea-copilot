@@ -355,6 +355,18 @@ class GiteaClient(BaseGitClient):
             data={"state": "closed"}
         )
 
+    async def open_issue(self, owner: str, repo: str, issue_number: int) -> Dict:
+        """Open/reopen an issue or PR.
+
+        In Gitea, PRs are also issues, so this works for both.
+        Uses PATCH to update state to 'open'.
+        """
+        return await self._request(
+            "PATCH",
+            f"/repos/{owner}/{repo}/issues/{issue_number}",
+            data={"state": "open"}
+        )
+
     # ============ Pull Request Operations ============
 
     async def get_pull_request(self, owner: str, repo: str, pr_number: int) -> Dict:

@@ -1,5 +1,5 @@
 import pytest
-from app.skills.implementations import HelpSkill, LabelSkill, AnalyzeSkill, ReviewSkill, CloseSkill
+from app.skills.implementations import HelpSkill, LabelSkill, AnalyzeSkill, ReviewSkill, CloseSkill, OpenSkill
 from app.gitea.base import BaseGitClient
 from app.skills.llm_client import LLMClient
 import json
@@ -25,6 +25,20 @@ async def test_close_skill(mocker):
     res = await skill.execute("close", {}, {}, payload)
     assert res == ""  # CloseSkill is silent
     mock_git.close_issue.assert_called_once_with("owner", "repo", 123)
+
+@pytest.mark.asyncio
+async def test_open_skill(mocker):
+    mock_git = mocker.Mock(spec=BaseGitClient)
+    skill = OpenSkill(mocker.Mock(), mock_git)
+
+    payload = {
+        "repository": {"full_name": "owner/repo"},
+        "issue": {"number": 123}
+    }
+
+    res = await skill.execute("open", {}, {}, payload)
+    assert res == ""  # OpenSkill is silent
+    mock_git.open_issue.assert_called_once_with("owner", "repo", 123)
 
 @pytest.mark.asyncio
 async def test_label_skill(mocker):

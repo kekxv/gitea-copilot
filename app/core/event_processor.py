@@ -47,7 +47,9 @@ class EventProcessor:
         logger.info("=== _process_issue_comment called ===")
 
         comment = payload.get("comment", {})
-        issue = payload.get("issue", {})
+        # Support both issue and pull_request fields
+        # Gitea uses Issue API for PRs, so PR comments might come with pull_request field
+        issue = payload.get("issue", {}) or payload.get("pull_request", {})
         repository = payload.get("repository", {})
 
         comment_body = comment.get("body", "")
@@ -56,7 +58,7 @@ class EventProcessor:
         sender = payload.get("sender", {}).get("login", "")
 
         logger.info(f"Comment body: '{comment_body}'")
-        logger.info(f"Issue number: {issue_number}")
+        logger.info(f"Issue/PR number: {issue_number}")
         logger.info(f"Repository: {owner_repo}")
         logger.info(f"Sender: {sender}")
         logger.info(f"Bot username: {self.bot_username}")

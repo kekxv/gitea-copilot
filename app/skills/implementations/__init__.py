@@ -75,6 +75,9 @@ class HelpSkill(BaseSkill):
 **关闭 Issue/PR** - 静默关闭
 `@我 close`
 
+**重新打开 Issue/PR** - 静默打开
+`@我 open`
+
 **帮助** - 显示这个信息
 `@我 help`
 
@@ -102,6 +105,30 @@ class CloseSkill(BaseSkill):
             logger.info(f"Closed {owner}/{repo}#{issue_number}")
         except Exception as e:
             logger.error(f"Failed to close issue: {e}", exc_info=True)
+        return ""
+
+
+class OpenSkill(BaseSkill):
+    """Skill for opening/reopening issues and pull requests."""
+
+    async def execute(
+        self,
+        intent: str,
+        target: Dict[Any, Any],
+        comment: Optional[Dict],
+        payload: Dict[Any, Any]
+    ) -> str:
+        """Open/reopen the issue/PR - silently, no reply."""
+        owner, repo = self.get_repo_info(payload)
+        issue_number = self.get_issue_number(payload)
+        if not owner or not repo or not issue_number:
+            return ""
+
+        try:
+            await self.git_client.open_issue(owner, repo, issue_number)
+            logger.info(f"Opened {owner}/{repo}#{issue_number}")
+        except Exception as e:
+            logger.error(f"Failed to open issue: {e}", exc_info=True)
         return ""
 
 
@@ -226,7 +253,10 @@ class ReviewSkill(BaseSkill):
                 text = re.sub(rf"@{re.escape(sender_login)}\b", f"@ {sender_login}", text)
             return text
 
-        if not payload.get("is_pull", False):
+        # Check if this is a PR - payload should have pull_request field
+        # or target might have pull_request field indicating it's a PR
+        is_pull = payload.get("is_pull") or payload.get("pull_request") is not None or target.get("pull_request") is not None
+        if not is_pull:
             return "这个命令只在 Pull Request 里有效哦 🙃"
 
         try:
