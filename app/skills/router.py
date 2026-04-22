@@ -46,7 +46,8 @@ class SkillRouter:
             "copilot_docs_limit": 10,
             "copilot_docs_size_limit": 25,
             "ai_max_tokens": 8000,
-            "ai_context_limit": 50000
+            "ai_context_limit": 50000,
+            "strip_emoji": False
         }
 
         if self.db_session:
@@ -61,6 +62,8 @@ class SkillRouter:
                         config["ai_max_tokens"] = sys_config.ai_max_tokens
                     if sys_config.ai_context_limit:
                         config["ai_context_limit"] = sys_config.ai_context_limit
+                    if sys_config.strip_emoji:
+                        config["strip_emoji"] = sys_config.strip_emoji
             except Exception as e:
                 logger.warning(f"Failed to load config: {e}")
 
