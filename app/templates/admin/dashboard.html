@@ -162,6 +162,13 @@
                             <input type="number" name="ai_max_tokens" value="{{ config.ai_max_tokens or 8000 }}">
                         </div>
                     </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" name="strip_emoji" {% if config.strip_emoji %}checked{% endif %}>
+                            <span>屏蔽 Review 评论中的 Emoji</span>
+                        </label>
+                        <small class="form-hint">避免 Gitea 前端编辑评论时报错</small>
+                    </div>
                     <button type="submit" class="btn btn-primary mt-2">保存配置</button>
                 </form>
             </div>

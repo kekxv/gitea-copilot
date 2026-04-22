@@ -34,6 +34,8 @@ class SystemConfig(Base):
     ai_context_limit = Column(Integer, nullable=True, default=50000)  # Max total context tokens
     # Polling config
     notification_poll_interval = Column(Integer, nullable=True, default=1)  # Interval in minutes
+    # Review config
+    strip_emoji = Column(Boolean, nullable=True, default=False)  # Strip emojis in review comments
 
 
 class GiteaInstance(Base):

@@ -5,6 +5,7 @@ from ...gitea.base import BaseGitClient
 import logging
 import re
 import json
+import asyncio
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -238,6 +239,7 @@ class ReviewSkill(BaseSkill):
         pr_number = self.get_issue_number(payload)
         original_comment_body = comment.get("body", "") if comment else "@caesar review"
         sender_login = payload.get("sender", {}).get("login", "")
+        strip_emoji = self.config.get("strip_emoji", False)
 
         def scrub(text: str) -> str:
             if not text: return ""
@@ -251,6 +253,19 @@ class ReviewSkill(BaseSkill):
             for p, r in patterns: text = re.sub(p, r, text)
             if sender_login:
                 text = re.sub(rf"@{re.escape(sender_login)}\b", f"@ {sender_login}", text)
+            # Remove emojis if configured (to avoid Gitea frontend editing issues)
+            if strip_emoji:
+                emoji_pattern = re.compile(
+                    '['
+                    '\U0001F300-\U0001F9FF'  # Misc Symbols and Pictographs, Emoticons, etc.
+                    '\U00002600-\U000027BF'  # Misc symbols
+                    '\U0001F600-\U0001F64F'  # Emoticons
+                    '\U0001F680-\U0001F6FF'  # Transport & Map
+                    '\U0001F1E0-\U0001F1FF'  # Flags
+                    '\U00002702-\U000027B0'  # Dingbats
+                    '\U000024C2-\U0001F251'  # Enclosed characters
+                    ']+', flags=re.UNICODE)
+                text = emoji_pattern.sub('', text)
             return text
 
         # Check if this is a PR - payload should have pull_request field
@@ -296,83 +311,112 @@ class ReviewSkill(BaseSkill):
                 current_chunk.append(file); current_chunk_lines += len(file['lines'])
             if current_chunk: chunks.append(current_chunk)
 
-            # 4. AI Process
+            # 4. AI Process with retry mechanism
             from ..tools import REVIEW_TOOLS, get_review_system_prompt
+            max_retries = 5
+            retry_delay = 15  # seconds
+
             all_comments = []
             all_summaries = []
-            all_events = []  # Collect events from AI
-            file_cache: Dict[str, str] = {}
+            all_events = []
             successfully_processed_chunks = 0
 
-            for i, chunk in enumerate(chunks):
-                diff_context = self._format_diff_for_review(chunk)
-                async def handle_tool_call(tool_name: str, args: Dict) -> Dict:
-                    if tool_name == "get_file_content":
-                        path = args.get("path", "")
-                        if path in file_cache: return {"path": path, "content": file_cache[path]}
-                        content = await self.git_client.get_repo_file_content(owner, repo, path)
-                        if content: file_cache[path] = content; return {"path": path, "content": content}
-                        return {"error": "File not found"}
-                    elif tool_name == "submit_review":
-                        raw_c = args.get("comments", [])
-                        if isinstance(raw_c, str):
-                            try: raw_c = json.loads(raw_c)
-                            except: pass
-                        if isinstance(raw_c, dict): raw_c = [raw_c]
+            for retry in range(max_retries):
+                all_comments = []
+                all_summaries = []
+                all_events = []
+                file_cache: Dict[str, str] = {}
+                successfully_processed_chunks = 0
+                ai_error = None
 
-                        logger.debug(f"📝 submit_review called with {len(raw_c or [])} comments")
+                try:
+                    for i, chunk in enumerate(chunks):
+                        diff_context = self._format_diff_for_review(chunk)
+                        async def handle_tool_call(tool_name: str, args: Dict) -> Dict:
+                            if tool_name == "get_file_content":
+                                path = args.get("path", "")
+                                if path in file_cache: return {"path": path, "content": file_cache[path]}
+                                content = await self.git_client.get_repo_file_content(owner, repo, path)
+                                if content: file_cache[path] = content; return {"path": path, "content": content}
+                                return {"error": "File not found"}
+                            elif tool_name == "submit_review":
+                                raw_c = args.get("comments", [])
+                                if isinstance(raw_c, str):
+                                    try: raw_c = json.loads(raw_c)
+                                    except: pass
+                                if isinstance(raw_c, dict): raw_c = [raw_c]
 
-                        # Collect event from AI
-                        event = args.get("event", "COMMENT")
-                        all_events.append(event)
-                        logger.info(f"   AI event: {event}")
+                                logger.debug(f"📝 submit_review called with {len(raw_c or [])} comments")
 
-                        for c in (raw_c or []):
-                            path, body = c.get("path"), c.get("body")
-                            if not path or not body: continue
-                            nl = c.get("new_position") or c.get("new_line")
-                            ol = c.get("old_position") or c.get("old_line")
-                            nl = int(nl) if nl is not None else None
-                            ol = int(ol) if ol is not None else None
+                                # Collect event from AI
+                                event = args.get("event", "COMMENT")
+                                all_events.append(event)
+                                logger.info(f"   AI event: {event}")
 
-                            # Check if path exists in valid_lines
-                            if path not in valid_lines:
-                                all_summaries.append(f"**[{path}] 补充记录**: {body}")
-                                logger.debug(f"   ⚠ Path {path} not in diff, added to summary")
-                                continue
+                                for c in (raw_c or []):
+                                    path, body = c.get("path"), c.get("body")
+                                    if not path or not body: continue
+                                    nl = c.get("new_position") or c.get("new_line")
+                                    ol = c.get("old_position") or c.get("old_line")
+                                    nl = int(nl) if nl is not None else None
+                                    ol = int(ol) if ol is not None else None
 
-                            if nl and nl in valid_lines[path]["new"]:
-                                all_comments.append({"path": path, "new_position": nl, "old_position": None, "body": body})
-                                logger.debug(f"   ✓ Comment on {path}:{nl} (new)")
-                            elif ol and ol in valid_lines[path]["old"]:
-                                all_comments.append({"path": path, "new_position": None, "old_position": ol, "body": body})
-                                logger.debug(f"   ✓ Comment on {path}:{ol} (old)")
-                            else:
-                                all_summaries.append(f"**[{path}] 补充记录**: {body}")
-                                logger.debug(f"   ⚠ Comment on {path} (nl={nl}, ol={ol}) not in valid range, added to summary")
+                                    # Check if path exists in valid_lines
+                                    if path not in valid_lines:
+                                        all_summaries.append(f"**[{path}] 补充记录**: {body}")
+                                        logger.debug(f"   ⚠ Path {path} not in diff, added to summary")
+                                        continue
 
-                        if args.get("summary"):
-                            all_summaries.append(args["summary"])
-                            logger.debug(f"   Summary: {args['summary'][:100]}...")
-                        return {"success": True, "__break__": True}
-                    return {"error": "Unknown tool"}
+                                    if nl and nl in valid_lines[path]["new"]:
+                                        all_comments.append({"path": path, "new_position": nl, "old_position": None, "body": body})
+                                        logger.debug(f"   ✓ Comment on {path}:{nl} (new)")
+                                    elif ol and ol in valid_lines[path]["old"]:
+                                        all_comments.append({"path": path, "new_position": None, "old_position": ol, "body": body})
+                                        logger.debug(f"   ✓ Comment on {path}:{ol} (old)")
+                                    else:
+                                        all_summaries.append(f"**[{path}] 补充记录**: {body}")
+                                        logger.debug(f"   ⚠ Comment on {path} (nl={nl}, ol={ol}) not in valid range, added to summary")
 
-                prompt = f"审查 PR #{pr_number} (第 {i+1}/{len(chunks)} 部分)\n标题: {pr_title}\n\n{diff_context}"
-                logger.debug(f"🔍 Processing chunk {i+1}/{len(chunks)} with {len(chunk)} files: {[f['path'] for f in chunk]}")
-                system_prompt = get_review_system_prompt(len(chunks))
-                res, _ = await self.llm.generate_with_tools(prompt, system_prompt, REVIEW_TOOLS, on_tool_call=handle_tool_call)
-                logger.debug(f"✅ Chunk {i+1}/{len(chunks)} completed, collected {len(all_comments)} comments so far")
-                if "AI 调用出错" in res:
-                    raise Exception(f"AI 服务响应异常: {res}")
-                successfully_processed_chunks += 1
+                                if args.get("summary"):
+                                    all_summaries.append(args["summary"])
+                                    logger.debug(f"   Summary: {args['summary'][:100]}...")
+                                return {"success": True, "__break__": True}
+                            return {"error": "Unknown tool"}
+
+                        prompt = f"审查 PR #{pr_number} (第 {i+1}/{len(chunks)} 部分)\n标题: {pr_title}\n\n{diff_context}"
+                        logger.debug(f"🔍 Processing chunk {i+1}/{len(chunks)} with {len(chunk)} files: {[f['path'] for f in chunk]}")
+                        system_prompt = get_review_system_prompt(len(chunks))
+                        res, _ = await self.llm.generate_with_tools(prompt, system_prompt, REVIEW_TOOLS, on_tool_call=handle_tool_call)
+                        logger.debug(f"✅ Chunk {i+1}/{len(chunks)} completed, collected {len(all_comments)} comments so far")
+                        if "AI 调用出错" in res:
+                            raise Exception(f"AI 服务响应异常: {res}")
+                        successfully_processed_chunks += 1
+
+                    # Check results
+                    if successfully_processed_chunks == 0:
+                        raise Exception("无法从 AI 获取有效的审查结果。")
+                    if not all_summaries:
+                        raise Exception("AI 审核服务异常，未返回审查摘要。")
+
+                    # Success - break out of retry loop
+                    logger.info(f"AI review completed successfully")
+                    break
+
+                except Exception as e:
+                    ai_error = str(e)
+                    logger.warning(f"AI review attempt {retry + 1}/{max_retries} failed: {e}")
+                    if retry < max_retries - 1:
+                        logger.info(f"Retrying in {retry_delay} seconds...")
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        logger.error(f"All {max_retries} retries exhausted, review failed")
+                        # Don't submit error comment, just return empty
+                        return ""
 
             # 5. Finalize Result
-            if successfully_processed_chunks == 0:
-                raise Exception("无法从 AI 获取有效的审查结果。")
-
-            # Check if AI actually called submit_review with summary
             if not all_summaries:
-                raise Exception("AI 审核服务异常，请手动审核或重新提交审核请求。")
+                logger.error("No summaries collected after retries")
+                return ""
 
             unique_comments = []
             seen_keys = set()
@@ -384,19 +428,16 @@ class ReviewSkill(BaseSkill):
             summary_text = "\n\n".join(list(dict.fromkeys(all_summaries)))
             final_body = scrub(summary_text)
 
-            # Determine final event: intercept APPROVED -> COMMENT
-            # If any chunk requested changes, use REQUEST_CHANGES
-            # Otherwise use COMMENT (APPROVED forced to COMMENT)
-            # IMPORTANT: Cannot use REQUEST_CHANGES on own PR
+            # Determine final event
             if is_own_pr:
                 # Bot cannot reject its own PR, force to COMMENT
                 final_event = "COMMENT"
-                logger.info(f"Final event: COMMENT (own PR, cannot REQUEST_CHANGES)")
+                logger.info(f"Final event: COMMENT (own PR)")
             else:
+                # Normal review: use REQUEST_CHANGES if AI found issues
                 normalized_events = []
                 for e in all_events:
                     if e == "APPROVED":
-                        logger.warning(f"AI returned APPROVED, forcing to COMMENT")
                         normalized_events.append("COMMENT")
                     else:
                         normalized_events.append(e)
@@ -430,12 +471,12 @@ class ReviewSkill(BaseSkill):
                 commit_id=head_sha
             )
             logger.info(f"Review submitted: event={final_event}, {len(api_comments)} comments")
-            return "" 
+            return ""
 
         except Exception as e:
             logger.error(f"Review failed: {e}", exc_info=True)
-            quoted = f"> {scrub(original_comment_body)}\n\n"
-            return f"{quoted}❌ **代码审核失败**\n\n{scrub(str(e))}"
+            # Don't submit error comment, just return empty
+            return ""
 
     def _parse_diff(self, diff_text: str) -> List[Dict[str, Any]]:
         """Parse diff to get file changes with line numbers."""

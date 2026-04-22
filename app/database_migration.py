@@ -10,6 +10,7 @@ logger = logging.getLogger("uvicorn.error")
 # Version 1: Add columns for notification polling
 # Version 2: Add unique index for processed_events
 # Version 3: Add auth_mode column for token/oauth distinction
+# Version 4: Add strip_emoji column for review emoji setting
 MIGRATIONS = [
     (1, [
         "ALTER TABLE system_config ADD COLUMN notification_poll_interval INTEGER DEFAULT 1",
@@ -20,6 +21,9 @@ MIGRATIONS = [
     ]),
     (3, [
         "ALTER TABLE gitea_accounts ADD COLUMN auth_mode VARCHAR(10) DEFAULT 'oauth'"
+    ]),
+    (4, [
+        "ALTER TABLE system_config ADD COLUMN strip_emoji BOOLEAN DEFAULT 0"
     ]),
 ]
 

@@ -104,6 +104,8 @@ async def test_review_skill_request_changes(mocker):
     mock_git.get_current_user = mocker.AsyncMock(return_value={"login": "bot-user"})
     mock_git.get_repo_file_content = mocker.AsyncMock(return_value=None)
     mock_git.create_pull_request_review = mocker.AsyncMock(return_value={})
+    mock_git.get_server_version = mocker.AsyncMock(return_value="1.24.0")
+    mock_git._is_legacy_version = mocker.Mock(return_value=False)
 
     mock_llm = mocker.Mock(spec=LLMClient)
     skill = ReviewSkill(mock_llm, mock_git)
@@ -146,6 +148,8 @@ async def test_review_skill_approved_forced_to_comment(mocker):
     mock_git.get_current_user = mocker.AsyncMock(return_value={"login": "bot-user"})
     mock_git.get_repo_file_content = mocker.AsyncMock(return_value=None)
     mock_git.create_pull_request_review = mocker.AsyncMock(return_value={})
+    mock_git.get_server_version = mocker.AsyncMock(return_value="1.24.0")
+    mock_git._is_legacy_version = mocker.Mock(return_value=False)
 
     mock_llm = mocker.Mock(spec=LLMClient)
     skill = ReviewSkill(mock_llm, mock_git)
@@ -182,6 +186,8 @@ async def test_review_skill_own_pr_forced_to_comment(mocker):
     mock_git.get_current_user = mocker.AsyncMock(return_value={"login": "bot-user"})
     mock_git.get_repo_file_content = mocker.AsyncMock(return_value=None)
     mock_git.create_pull_request_review = mocker.AsyncMock(return_value={})
+    mock_git.get_server_version = mocker.AsyncMock(return_value="1.24.0")
+    mock_git._is_legacy_version = mocker.Mock(return_value=False)
 
     mock_llm = mocker.Mock(spec=LLMClient)
     skill = ReviewSkill(mock_llm, mock_git)

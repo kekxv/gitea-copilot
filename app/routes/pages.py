@@ -404,6 +404,7 @@ async def admin_config_update(
     ai_max_tokens: int = Form(default=8000),
     ai_context_limit: int = Form(default=50000),
     notification_poll_interval: int = Form(default=1),
+    strip_emoji: str = Form(default=""),
     clear_api_key: str = Form(default=""),
     db: Session = Depends(get_db)
 ):
@@ -424,6 +425,9 @@ async def admin_config_update(
     config.ai_max_tokens = ai_max_tokens
     config.ai_context_limit = ai_context_limit
     config.notification_poll_interval = notification_poll_interval
+
+    # Strip emoji setting (checkbox: value "on" when checked, empty when unchecked)
+    config.strip_emoji = strip_emoji == "on"
 
     # Handle API key: clear if requested, update if provided
     if clear_api_key:
