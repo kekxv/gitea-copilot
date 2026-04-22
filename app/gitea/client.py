@@ -26,6 +26,7 @@ class GiteaClient(BaseGitClient):
         self.access_token = access_token
         self.account_id = account_id
         self.db_session = db_session
+        self._server_version: Optional[str] = None  # Cache server version for compatibility
 
     async def _ensure_valid_token(self):
         """Check if token is about to expire and refresh if needed (OAuth mode only)."""
@@ -70,6 +71,33 @@ class GiteaClient(BaseGitClient):
             "Authorization": f"token {self.access_token}",
             "Accept": "application/json"
         }
+
+    async def get_server_version(self) -> str:
+        """Get Gitea server version with caching."""
+        if self._server_version:
+            return self._server_version
+        try:
+            result = await self._request("GET", "/version")
+            self._server_version = result.get("version", "")
+            logger.info(f"Gitea server version: {self._server_version}")
+            return self._server_version
+        except Exception as e:
+            logger.warning(f"Failed to get server version: {e}")
+            return ""
+
+    def _is_legacy_version(self, version: str) -> bool:
+        """Check if version needs legacy API handling (<= 1.23.x)."""
+        if not version:
+            return True  # Unknown version, use safe defaults
+        try:
+            # Parse version like "1.23.6" or "1.24.0"
+            parts = version.split(".")
+            major = int(parts[0]) if len(parts) > 0 else 0
+            minor = int(parts[1]) if len(parts) > 1 else 0
+            # Versions <= 1.23.x need legacy handling
+            return major <= 1 and minor <= 23
+        except:
+            return True
 
     async def _request(
         self,
@@ -404,12 +432,24 @@ class GiteaClient(BaseGitClient):
         event: str = "COMMENT",
         commit_id: Optional[str] = None
     ) -> Dict:
-        """Create a review on a pull request."""
+        """Create a review on a pull request with version-aware compatibility."""
+        # Get server version for compatibility handling
+        version = await self.get_server_version()
+
         data = {
             "event": event,
-            "body": body,
-            "comments": comments
+            "body": body
         }
+
+        # Version-aware handling for comments
+        # Gitea <= 1.23.x doesn't accept empty comments array
+        if comments:
+            data["comments"] = comments
+        elif not self._is_legacy_version(version):
+            # New versions can accept empty array
+            data["comments"] = []
+
+        # commit_id handling (optional field)
         if commit_id:
             data["commit_id"] = commit_id
 

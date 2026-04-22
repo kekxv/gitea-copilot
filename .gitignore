@@ -46,6 +46,7 @@ Thumbs.db
 .idea/
 .gemini-clipboard
 gitea.swagger.v1.json
+gitea.swagger.1.23.6.v1.json
 
 # Coverage
 .coverage
