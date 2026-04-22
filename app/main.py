@@ -153,7 +153,9 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     logger.info("Application started and scheduler running")
     yield
-    # Shutdown (if needed)
+    # Shutdown
+    from .skills.llm_client import close_llm_client
+    await close_llm_client()
     logger.info("Application shutting down")
 
 

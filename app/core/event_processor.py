@@ -95,6 +95,7 @@ class EventProcessor:
 
         # Combine all non-empty responses into one comment
         if responses:
+            owner, repo = owner_repo.split("/", 1)
             combined = "\n\n---\n\n".join(responses)
             combined = self._remove_self_mentions(combined)
             logger.info(f"Posting combined comment ({len(responses)} responses) to Gitea...")

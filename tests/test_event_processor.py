@@ -194,3 +194,105 @@ class TestExtractIntents:
         text = "@gitea-copilot open @gitea-copilot 打开 @gitea-copilot 重开"
         intents = processor._extract_intents(text)
         assert intents == ["open"]
+
+
+class TestIsMentionInQuote:
+    """Tests for _is_mention_in_quote method."""
+
+    def create_processor(self, bot_username: str = "gitea-copilot"):
+        """Helper to create a processor with _is_mention_in_quote method."""
+        from app.core.event_processor import EventProcessor
+        from app.models import GiteaInstance, GiteaAccount
+
+        # Create mock instance and account
+        mock_instance = GiteaInstance(url="http://test.com")
+        mock_account = GiteaAccount(gitea_username=bot_username)
+
+        # Create processor with mocked components
+        processor = EventProcessor.__new__(EventProcessor)
+        processor.bot_username = bot_username
+
+        return processor
+
+    def test_plain_mention_not_in_quote(self):
+        """Test that plain mention is not detected as in quote."""
+        processor = self.create_processor()
+        text = "@gitea-copilot review"
+        assert processor._is_mention_in_quote(text) is False
+
+    def test_mention_in_details_block(self):
+        """Test detection of mention in <details> block."""
+        processor = self.create_processor()
+        text = "<details><summary>引用</summary>@gitea-copilot review</details>"
+        assert processor._is_mention_in_quote(text) is True
+
+    def test_mention_in_summary_block(self):
+        """Test detection of mention in <summary> block."""
+        processor = self.create_processor()
+        text = "<summary>@gitea-copilot review</summary>"
+        assert processor._is_mention_in_quote(text) is True
+
+    def test_mention_in_markdown_quote(self):
+        """Test detection of mention in markdown quote (> )."""
+        processor = self.create_processor()
+        text = "> @gitea-copilot review"
+        assert processor._is_mention_in_quote(text) is True
+
+    def test_mention_in_code_quote_block(self):
+        """Test detection of mention in ```quote block."""
+        processor = self.create_processor()
+        text = "```quote\n@gitea-copilot review\n```"
+        assert processor._is_mention_in_quote(text) is True
+
+    def test_mention_not_in_regular_code_block(self):
+        """Test that mention in regular code block is NOT detected as quote."""
+        processor = self.create_processor()
+        text = "```python\n@gitea-copilot review\n```"
+        assert processor._is_mention_in_quote(text) is False
+
+    def test_multiline_quote(self):
+        """Test multiline markdown quote."""
+        processor = self.create_processor()
+        text = "> some text\n> more text\n> @gitea-copilot review\n> end"
+        assert processor._is_mention_in_quote(text) is True
+
+
+class TestRemoveSelfMentions:
+    """Tests for _remove_self_mentions method."""
+
+    def create_processor(self, bot_username: str = "gitea-copilot"):
+        """Helper to create a processor with _remove_self_mentions method."""
+        from app.core.event_processor import EventProcessor
+
+        processor = EventProcessor.__new__(EventProcessor)
+        processor.bot_username = bot_username
+
+        return processor
+
+    def test_single_mention_replaced(self):
+        """Test single mention is replaced."""
+        processor = self.create_processor()
+        text = "@gitea-copilot review"
+        result = processor._remove_self_mentions(text)
+        assert result == "@ gitea-copilot review"
+
+    def test_multiple_mentions_replaced(self):
+        """Test multiple mentions are replaced."""
+        processor = self.create_processor()
+        text = "@gitea-copilot review and @gitea-copilot help"
+        result = processor._remove_self_mentions(text)
+        assert result == "@ gitea-copilot review and @ gitea-copilot help"
+
+    def test_no_mention_unchanged(self):
+        """Test text without mention is unchanged."""
+        processor = self.create_processor()
+        text = "This is just text"
+        result = processor._remove_self_mentions(text)
+        assert result == text
+
+    def test_other_mentions_unchanged(self):
+        """Test other user mentions are unchanged."""
+        processor = self.create_processor()
+        text = "@other-user hello @gitea-copilot review"
+        result = processor._remove_self_mentions(text)
+        assert result == "@other-user hello @ gitea-copilot review"

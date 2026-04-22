@@ -207,40 +207,56 @@ class LLMClient:
             logger.error(f"LLM API call failed: {e}", exc_info=True)
             return f"LLM API 调用出错: {str(e)}"
 
+    async def aclose(self):
+        """Close the async client properly to avoid event loop errors."""
+        await self.client.close()
+
+
+# Global LLM client instance (lazy initialized)
+_llm_client: Optional[LLMClient] = None
+_llm_client_config_key: Optional[str] = None
+
+
+def get_llm_client() -> LLMClient:
+    """Get or create the global LLM client instance (uses env vars)."""
+    global _llm_client
+    if _llm_client is None:
+        _llm_client = LLMClient()
+    return _llm_client
+
 
 def get_llm_client_from_config(db_session=None) -> LLMClient:
     """Get LLM client configured from SystemConfig or environment.
 
+    Uses a global singleton that is reused across requests.
     Priority: non-empty SystemConfig > LLM_* env vars > OPENAI_* env vars > defaults
     """
+    global _llm_client, _llm_client_config_key
+
+    # Build config key to detect changes
     base_url = None
     api_key = None
     model = None
 
-    # Try to get from database if session available
     if db_session:
         try:
             from ..models import SystemConfig
             config = db_session.query(SystemConfig).first()
             if config:
-                # Only use db config if it's explicitly set (non-empty)
                 if config.llm_base_url and config.llm_base_url.strip():
                     base_url = config.llm_base_url.strip()
                 if config.llm_api_key and config.llm_api_key.strip():
                     api_key = config.llm_api_key.strip()
                 if config.llm_model and config.llm_model.strip():
                     model = config.llm_model.strip()
-                logger.info(f"LLM config from DB: base_url={base_url}, model={model}, has_key={bool(api_key)}")
         except Exception as e:
             logger.warning(f"Failed to get config from DB: {e}")
 
     # Fall back to environment variables if not set from DB
-    # Priority: LLM_* > OPENAI_*
     env_base_url = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL")
     env_api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
     env_model = os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL")
 
-    # Use env vars if DB config was empty/None
     if not base_url and env_base_url:
         base_url = env_base_url
     if not api_key and env_api_key and env_api_key.strip():
@@ -254,22 +270,43 @@ def get_llm_client_from_config(db_session=None) -> LLMClient:
     if not model:
         model = "gpt-4o-mini"
 
-    return LLMClient(base_url=base_url, api_key=api_key, model=model)
+    # Create config key to detect changes
+    config_key = f"{base_url}|{model}|{bool(api_key)}"
 
+    # Return existing client if config hasn't changed
+    if _llm_client is not None and _llm_client_config_key == config_key:
+        return _llm_client
 
-# Global LLM client instance (lazy initialized)
-_llm_client: Optional[LLMClient] = None
+    # Close old client if exists
+    if _llm_client is not None:
+        try:
+            # Note: This is synchronous context, cannot await aclose()
+            # The old client will be garbage collected, but we minimize impact
+            logger.info("LLM config changed, client will be recreated")
+        except Exception:
+            pass
 
+    # Create new client
+    _llm_client = LLMClient(base_url=base_url, api_key=api_key, model=model)
+    _llm_client_config_key = config_key
+    logger.info(f"Created new global LLM client: base_url={base_url}, model={model}")
 
-def get_llm_client() -> LLMClient:
-    """Get or create the global LLM client instance (uses env vars)."""
-    global _llm_client
-    if _llm_client is None:
-        _llm_client = LLMClient()
     return _llm_client
 
 
 def reset_llm_client():
     """Reset the global LLM client (called when config changes)."""
-    global _llm_client
+    global _llm_client, _llm_client_config_key
     _llm_client = None
+    _llm_client_config_key = None
+
+
+async def close_llm_client():
+    """Close the global LLM client properly on shutdown."""
+    global _llm_client
+    if _llm_client is not None:
+        try:
+            await _llm_client.aclose()
+        except Exception as e:
+            logger.warning(f"Error closing LLM client: {e}")
+        _llm_client = None

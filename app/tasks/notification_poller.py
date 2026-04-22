@@ -122,8 +122,18 @@ async def handle_notification(note: dict, client: GiteaClient, account: GiteaAcc
     logger.info(f"Marked notification {note_id} as read, analyzing thread...")
 
     try:
-        owner = repository.get("owner", {}).get("login") or repository.get("full_name", "").split("/")[0]
-        repo_name = repository.get("name") or repository.get("full_name", "").split("/")[1]
+        owner = repository.get("owner", {}).get("login")
+        repo_name = repository.get("name")
+        full_name = repository.get("full_name", "")
+
+        # Fallback to parsing full_name if owner/repo_name not available
+        if not owner and full_name and "/" in full_name:
+            parts = full_name.split("/", 1)
+            owner = parts[0]
+        if not repo_name and full_name and "/" in full_name:
+            parts = full_name.split("/", 1)
+            repo_name = parts[1] if len(parts) > 1 else None
+
         issue_url = subject.get("url", "")
         logger.info(f"Parsing: owner={owner}, repo={repo_name}, issue_url={issue_url}")
 
