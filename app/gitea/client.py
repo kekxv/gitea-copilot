@@ -76,7 +76,8 @@ class GiteaClient(BaseGitClient):
         method: str,
         path: str,
         data: Optional[Dict] = None,
-        params: Optional[Dict] = None
+        params: Optional[Dict] = None,
+        include_error_body: bool = True,
     ) -> Dict[Any, Any]:
         """Make a request to Gitea API with auto-refresh check."""
         await self._ensure_valid_token()
@@ -101,8 +102,12 @@ class GiteaClient(BaseGitClient):
 
             if response.status_code not in (200, 201, 204, 205):
                 error_body = response.text[:500] if response.text else ""
-                logger.error(f"Gitea API error: status {response.status_code} on {path} | Body: {error_body}")
-                raise Exception(f"Gitea API error: {response.status_code} - {error_body}")
+                if include_error_body:
+                    logger.error(f"Gitea API error: status {response.status_code} on {path} | Body: {error_body}")
+                    raise Exception(f"Gitea API error: {response.status_code} - {error_body}")
+
+                logger.error(f"Gitea API error: status {response.status_code} on {path}")
+                raise Exception(f"Gitea API error: {response.status_code}")
 
             if response.status_code == 204:
                 return {}
@@ -159,7 +164,8 @@ class GiteaClient(BaseGitClient):
             # Get user's permission for this repo
             permission_info = await self._request(
                 "GET",
-                f"/repos/{owner}/{repo}/collaborators/{username}/permission"
+                f"/repos/{owner}/{repo}/collaborators/{username}/permission",
+                include_error_body=False,
             )
 
             # Permission structure: {"permission": "admin"} or {"permission": "write"} etc.

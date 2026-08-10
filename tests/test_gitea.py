@@ -523,3 +523,20 @@ class TestGiteaClientPermission:
         client = GiteaClient(base_url="http://gitea.local", access_token="fake-token")
         result = await client.check_user_repo_access("owner", "repo", "user")
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_permission_lookup_error_logs_do_not_include_response_text(
+        self, mocker, caplog
+    ):
+        secret = "permission-error-response-secret"
+        mock_response = mocker.Mock()
+        mock_response.status_code = 403
+        mock_response.text = secret
+        mocker.patch("httpx.AsyncClient.request", return_value=mock_response)
+
+        client = GiteaClient(base_url="http://gitea.local", access_token="fake-token")
+        with caplog.at_level("ERROR", logger="uvicorn.error"):
+            result = await client.check_user_repo_access("owner", "repo", "user")
+
+        assert result is False
+        assert secret not in caplog.text
