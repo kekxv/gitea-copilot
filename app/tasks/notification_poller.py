@@ -252,7 +252,11 @@ async def handle_notification(note: dict, client: GiteaClient, account: GiteaAcc
                 """Retain authorized-event idempotency tracking after permission passes."""
                 event = ProcessedEvent(event_type=event_type, reference_id=ref_id)
                 db.add(event)
-                db.commit()
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
 
                 try:
                     if task.get("is_issue_body"):
