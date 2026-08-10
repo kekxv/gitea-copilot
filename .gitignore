@@ -52,3 +52,7 @@ gitea.swagger.1.23.6.v1.json
 .coverage
 htmlcov/
 .coverage.*
+
+# Local agent workspaces
+.worktrees/
+.superpowers/
