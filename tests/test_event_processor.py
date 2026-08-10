@@ -30,6 +30,29 @@ async def test_route_to_skill_reuses_processor_router(mocker):
 
 
 @pytest.mark.asyncio
+async def test_process_refreshes_router_for_each_event(mocker):
+    processor = EventProcessor.__new__(EventProcessor)
+    processor.client = mocker.Mock()
+    processor._process_issue_comment = mocker.AsyncMock()
+    first_db = mocker.Mock()
+    second_db = mocker.Mock()
+    first_router = mocker.Mock()
+    second_router = mocker.Mock()
+    router_class = mocker.patch("app.core.event_processor.SkillRouter")
+    router_class.side_effect = [first_router, second_router]
+
+    await processor.process("issue_comment", {}, first_db)
+    await processor.process("issue_comment", {}, second_db)
+
+    assert router_class.call_args_list == [
+        mocker.call(db_session=first_db, gitea_client=processor.client),
+        mocker.call(db_session=second_db, gitea_client=processor.client),
+    ]
+    assert first_router is not second_router
+    assert processor.router is second_router
+
+
+@pytest.mark.asyncio
 async def test_multiple_denied_intents_post_one_denial(mocker):
     from app.core.event_processor import EventProcessor
     from app.skills.router import PERMISSION_DENIED_MESSAGE

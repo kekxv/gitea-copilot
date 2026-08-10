@@ -20,7 +20,6 @@ class EventProcessor:
             account_id=account.id, 
             db_session=db
         )
-        self.router = SkillRouter(db_session=db, gitea_client=self.client)
         # Use the account's Gitea username as the bot username
         self.bot_username = account.gitea_username
 
@@ -28,6 +27,7 @@ class EventProcessor:
         """Process the webhook event."""
         logger.info(f"Processor.process called: event_type={event_type}")
         try:
+            self.router = SkillRouter(db_session=db, gitea_client=self.client)
             if event_type == "issue_comment":
                 logger.info("Processing as issue_comment event")
                 await self._process_issue_comment(payload, db)
