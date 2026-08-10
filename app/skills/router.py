@@ -134,7 +134,6 @@ class SkillRouter:
     ) -> str:
         """Route the intent to the appropriate skill handler."""
         logger.info(f"=== SkillRouter.route called ===")
-        logger.info(f"Intent: '{intent}'")
 
         skill_name = self.classify_intent(intent)
         logger.info(f"Classified as skill: {skill_name}")

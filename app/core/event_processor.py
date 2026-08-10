@@ -57,7 +57,6 @@ class EventProcessor:
         owner_repo = repository.get("full_name", "")
         sender = payload.get("sender", {}).get("login", "")
 
-        logger.info(f"Comment body: '{comment_body}'")
         logger.info(f"Issue/PR number: {issue_number}")
         logger.info(f"Repository: {owner_repo}")
         logger.info(f"Sender: {sender}")
@@ -84,12 +83,12 @@ class EventProcessor:
         logger.info(f"Bot mentioned! Processing...")
 
         intents = self._extract_intents(comment_body)
-        logger.info(f"Extracted intents: {intents}")
+        logger.info("Extracted %s command(s)", len(intents))
 
         responses = []
         for intent in intents:
             response = await self._route_to_skill(intent, issue, comment, payload, db)
-            logger.info(f"Intent '{intent}' response: {response[:100] if response else 'None'}...")
+            logger.info("Command routing completed; response_present=%s", bool(response))
             if response and response.strip():
                 responses.append(response)
 
@@ -193,7 +192,7 @@ class EventProcessor:
         owner, repo = owner_repo.split("/", 1)
 
         intent = self._extract_intents(issue_body)
-        logger.info(f"Extracted intents from issue body: {intent}")
+        logger.info("Extracted %s command(s) from issue body", len(intent))
 
         responses = []
         for i in intent:
@@ -232,7 +231,7 @@ class EventProcessor:
         owner, repo = owner_repo.split("/", 1)
 
         intent = self._extract_intents(pr_body)
-        logger.info(f"Extracted intents from PR body: {intent}")
+        logger.info("Extracted %s command(s) from PR body", len(intent))
 
         responses = []
         for i in intent:
@@ -327,7 +326,7 @@ class EventProcessor:
         db: Session
     ) -> str:
         """Route the intent to appropriate AI skill."""
-        logger.info(f"Routing intent: {intent}")
+        logger.info("Routing command to skill router")
 
         try:
             # Pass Gitea client to skill router for operations like labeling

@@ -46,6 +46,22 @@ async def test_route_denies_reader_before_close_executes(mocker):
 
 
 @pytest.mark.asyncio
+async def test_denied_route_does_not_log_secret_bearing_intent(mocker, caplog):
+    secret = "router-intent-secret"
+    mock_git = mocker.Mock()
+    mock_git.check_user_repo_access = mocker.AsyncMock(return_value=False)
+    mock_db = mocker.Mock()
+    mock_db.query.return_value.first.return_value = None
+    router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
+
+    with caplog.at_level("INFO", logger="uvicorn.error"):
+        result = await router.route(f"help {secret}", {}, None, command_payload("reader"))
+
+    assert result == PERMISSION_DENIED_MESSAGE
+    assert secret not in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "intent",
     ["help", "如何部署", "label bug", "review", "close", "open"],

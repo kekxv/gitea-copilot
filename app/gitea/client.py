@@ -162,26 +162,44 @@ class GiteaClient(BaseGitClient):
                 f"/repos/{owner}/{repo}/collaborators/{username}/permission"
             )
 
-            logger.debug(f"Permission info for '{username}' on {owner}/{repo}: {permission_info}")
-
             # Permission structure: {"permission": "admin"} or {"permission": "write"} etc.
             # Possible values: "read", "write", "admin", "owner"
             permission = permission_info.get("permission", "").lower()
 
-            logger.debug(f"User '{username}' has permission '{permission}' on {owner}/{repo}")
+            logger.debug(
+                "Checked repository permission for user=%s repository=%s/%s",
+                username,
+                owner,
+                repo,
+            )
 
             # Only write, admin, owner permissions are allowed
             allowed_permissions = ["write", "admin", "owner"]
 
             if permission in allowed_permissions:
-                logger.debug(f"User '{username}' has sufficient permission ({permission}) for AI operations")
+                logger.debug(
+                    "Repository permission granted for user=%s repository=%s/%s",
+                    username,
+                    owner,
+                    repo,
+                )
                 return True
 
-            logger.debug(f"User '{username}' has insufficient permission ({permission}), need write/admin")
+            logger.debug(
+                "Repository permission denied for user=%s repository=%s/%s",
+                username,
+                owner,
+                repo,
+            )
             return False
 
-        except Exception as e:
-            logger.warning(f"Cannot check permission for {username} on {owner}/{repo}: {e}")
+        except Exception:
+            logger.warning(
+                "Permission lookup failed for user=%s repository=%s/%s",
+                username,
+                owner,
+                repo,
+            )
             # If permission check fails, deny access
             return False
 

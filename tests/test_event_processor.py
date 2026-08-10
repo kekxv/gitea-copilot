@@ -1,6 +1,32 @@
 """Tests for EventProcessor intent extraction logic."""
 
 import pytest
+from unittest.mock import AsyncMock, Mock
+
+from app.core.event_processor import EventProcessor
+from app.skills.router import PERMISSION_DENIED_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_denied_comment_command_does_not_log_secret_bearing_intent(caplog):
+    secret = "caller-intent-secret"
+    processor = EventProcessor.__new__(EventProcessor)
+    processor.bot_username = "gitea-copilot"
+    processor.client = Mock()
+    processor.client.create_comment = AsyncMock(return_value={"id": 1})
+    processor.client.add_comment_reaction = AsyncMock()
+    processor._route_to_skill = AsyncMock(return_value=PERMISSION_DENIED_MESSAGE)
+    payload = {
+        "comment": {"body": f"@gitea-copilot help {secret}"},
+        "issue": {"number": 123},
+        "repository": {"full_name": "owner/repo"},
+        "sender": {"login": "reader"},
+    }
+
+    with caplog.at_level("INFO", logger="uvicorn.error"):
+        await processor._process_issue_comment(payload, Mock())
+
+    assert secret not in caplog.text
 
 
 class TestExtractIntents:
