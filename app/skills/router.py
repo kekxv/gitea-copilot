@@ -6,6 +6,8 @@ import logging
 
 logger = logging.getLogger("uvicorn.error")
 
+PERMISSION_DENIED_MESSAGE = "权限不足：此命令需要仓库写入权限。"
+
 
 class SkillRouter:
     """Route intents to appropriate skill handlers."""
@@ -19,6 +21,7 @@ class SkillRouter:
         self.llm = get_llm_client_from_config(db_session)
         self.gitea = gitea_client
         self.config = self._load_config()
+        self._permission_cache: Dict[tuple[str, str, str], bool] = {}
 
         # Intent keywords mapping
         self.intent_keywords = {
@@ -81,6 +84,47 @@ class SkillRouter:
         # Default to analyze for questions/requests
         return "analyze"
 
+    async def _has_write_access(self, payload: Dict[Any, Any]) -> bool:
+        repository = payload.get("repository") or {}
+        sender = payload.get("sender") or {}
+        full_name = repository.get("full_name") or ""
+        username = sender.get("login") or ""
+
+        if not username or "/" not in full_name:
+            logger.warning(
+                "Denied bot command: incomplete repository or sender identity"
+            )
+            return False
+
+        owner, repo = full_name.split("/", 1)
+        if not owner or not repo or self.gitea is None:
+            logger.warning(
+                "Denied bot command: invalid repository identity for sender=%s",
+                username,
+            )
+            return False
+
+        cache_key = (owner, repo, username)
+        if cache_key in self._permission_cache:
+            return self._permission_cache[cache_key]
+
+        try:
+            allowed = await self.gitea.check_user_repo_access(
+                owner, repo, username
+            )
+        except Exception:
+            logger.warning(
+                "Permission lookup failed for sender=%s repository=%s/%s",
+                username,
+                owner,
+                repo,
+                exc_info=True,
+            )
+            allowed = False
+
+        self._permission_cache[cache_key] = allowed
+        return allowed
+
     async def route(
         self,
         intent: str,
@@ -94,6 +138,17 @@ class SkillRouter:
 
         skill_name = self.classify_intent(intent)
         logger.info(f"Classified as skill: {skill_name}")
+
+        if not await self._has_write_access(payload):
+            repository = payload.get("repository") or {}
+            sender = payload.get("sender") or {}
+            logger.warning(
+                "Denied skill=%s sender=%s repository=%s",
+                skill_name,
+                sender.get("login") or "unknown",
+                repository.get("full_name") or "unknown",
+            )
+            return PERMISSION_DENIED_MESSAGE
 
         from .implementations import HelpSkill, LabelSkill, AnalyzeSkill, ReviewSkill, CloseSkill, OpenSkill
 

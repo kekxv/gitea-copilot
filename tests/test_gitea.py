@@ -437,6 +437,23 @@ class TestGiteaClientPermission:
     """Tests for permission checking."""
 
     @pytest.mark.asyncio
+    async def test_check_user_repo_access_owner(self, mocker):
+        mock_response = mocker.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"permission": "owner"}
+        mocker.patch("httpx.AsyncClient.request", return_value=mock_response)
+
+        client = GiteaClient(
+            base_url="http://gitea.local",
+            access_token="fake-token",
+        )
+        result = await client.check_user_repo_access(
+            "owner", "repo", "repository-owner"
+        )
+
+        assert result is True
+
+    @pytest.mark.asyncio
     async def test_check_user_repo_access_write(self, mocker):
         """Test check_user_repo_access with write permission."""
         mock_response = mocker.Mock()

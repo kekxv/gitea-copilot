@@ -1,7 +1,142 @@
 """Tests for SkillRouter module."""
 import pytest
-from app.skills.router import SkillRouter
+from app.skills.router import PERMISSION_DENIED_MESSAGE, SkillRouter
 from app.skills.implementations import HelpSkill, LabelSkill, AnalyzeSkill, ReviewSkill, CloseSkill, OpenSkill
+
+
+def command_payload(username: str = "writer") -> dict:
+    return {
+        "repository": {"full_name": "owner/repo"},
+        "sender": {"login": username},
+        "issue": {"number": 123},
+    }
+
+
+@pytest.mark.asyncio
+async def test_route_allows_writer_and_executes_close(mocker):
+    mock_git = mocker.Mock()
+    mock_git.check_user_repo_access = mocker.AsyncMock(return_value=True)
+    mock_git.close_issue = mocker.AsyncMock()
+    mock_db = mocker.Mock()
+    mock_db.query.return_value.first.return_value = None
+
+    router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
+    result = await router.route("close", {}, None, command_payload())
+
+    assert result == ""
+    mock_git.check_user_repo_access.assert_awaited_once_with(
+        "owner", "repo", "writer"
+    )
+    mock_git.close_issue.assert_awaited_once_with("owner", "repo", 123)
+
+
+@pytest.mark.asyncio
+async def test_route_denies_reader_before_close_executes(mocker):
+    mock_git = mocker.Mock()
+    mock_git.check_user_repo_access = mocker.AsyncMock(return_value=False)
+    mock_git.close_issue = mocker.AsyncMock()
+    mock_db = mocker.Mock()
+    mock_db.query.return_value.first.return_value = None
+
+    router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
+    result = await router.route("close", {}, None, command_payload("reader"))
+
+    assert result == PERMISSION_DENIED_MESSAGE
+    mock_git.close_issue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "intent",
+    ["help", "如何部署", "label bug", "review", "close", "open"],
+)
+async def test_every_skill_requires_write_access(mocker, intent):
+    mock_llm = mocker.Mock()
+    mock_llm.generate = mocker.AsyncMock()
+    mock_llm.generate_with_tools = mocker.AsyncMock()
+    mocker.patch(
+        "app.skills.router.get_llm_client_from_config",
+        return_value=mock_llm,
+    )
+    mock_git = mocker.Mock()
+    mock_git.check_user_repo_access = mocker.AsyncMock(return_value=False)
+    mock_git.get_repo_file_content = mocker.AsyncMock()
+    mock_git.add_issue_label = mocker.AsyncMock()
+    mock_git.get_pull_request = mocker.AsyncMock()
+    mock_git.close_issue = mocker.AsyncMock()
+    mock_git.open_issue = mocker.AsyncMock()
+    mock_db = mocker.Mock()
+    mock_db.query.return_value.first.return_value = None
+
+    router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
+    result = await router.route(intent, {}, None, command_payload("reader"))
+
+    assert result == PERMISSION_DENIED_MESSAGE
+    mock_llm.generate.assert_not_awaited()
+    mock_llm.generate_with_tools.assert_not_awaited()
+    mock_git.get_repo_file_content.assert_not_awaited()
+    mock_git.add_issue_label.assert_not_awaited()
+    mock_git.get_pull_request.assert_not_awaited()
+    mock_git.close_issue.assert_not_awaited()
+    mock_git.open_issue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"sender": {"login": "writer"}},
+        {"repository": {"full_name": "owner/repo"}},
+        {
+            "repository": {"full_name": "invalid-full-name"},
+            "sender": {"login": "writer"},
+        },
+    ],
+)
+async def test_route_denies_when_identity_is_incomplete(mocker, payload):
+    mock_git = mocker.Mock()
+    mock_git.check_user_repo_access = mocker.AsyncMock(return_value=True)
+    mock_db = mocker.Mock()
+    mock_db.query.return_value.first.return_value = None
+
+    router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
+    result = await router.route("help", {}, None, payload)
+
+    assert result == PERMISSION_DENIED_MESSAGE
+    mock_git.check_user_repo_access.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_route_denies_when_permission_lookup_raises(mocker):
+    mock_git = mocker.Mock()
+    mock_git.check_user_repo_access = mocker.AsyncMock(
+        side_effect=RuntimeError("Gitea unavailable")
+    )
+    mock_db = mocker.Mock()
+    mock_db.query.return_value.first.return_value = None
+
+    router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
+    result = await router.route("help", {}, None, command_payload())
+
+    assert result == PERMISSION_DENIED_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_permission_result_is_cached_within_one_router(mocker):
+    mock_git = mocker.Mock()
+    mock_git.check_user_repo_access = mocker.AsyncMock(return_value=True)
+    mock_db = mocker.Mock()
+    mock_db.query.return_value.first.return_value = None
+
+    router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
+    first = await router.route("help", {}, None, command_payload())
+    second = await router.route("help", {}, None, command_payload())
+
+    assert "Hi" in first
+    assert "Hi" in second
+    mock_git.check_user_repo_access.assert_awaited_once_with(
+        "owner", "repo", "writer"
+    )
 
 
 class TestSkillRouter:
@@ -103,12 +238,14 @@ class TestSkillRouter:
     @pytest.mark.asyncio
     async def test_route_to_help(self, mocker):
         """Test route dispatches to HelpSkill."""
+        mock_git = mocker.Mock()
+        mock_git.check_user_repo_access = mocker.AsyncMock(return_value=True)
         mock_db = mocker.Mock()
         mock_db.query.return_value.first.return_value = None
 
-        router = SkillRouter(db_session=mock_db, gitea_client=mocker.Mock())
+        router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
 
-        result = await router.route("help", {}, None, {})
+        result = await router.route("help", {}, None, command_payload())
         assert "帮助" in result
 
     @pytest.mark.asyncio
@@ -118,6 +255,7 @@ class TestSkillRouter:
         mock_llm.generate = mocker.AsyncMock(return_value="AI response")
 
         mock_git = mocker.Mock()
+        mock_git.check_user_repo_access = mocker.AsyncMock(return_value=True)
         mock_git.get_repo_file_content = mocker.AsyncMock(return_value="README content")
 
         mock_db = mocker.Mock()
@@ -128,7 +266,7 @@ class TestSkillRouter:
 
         router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
 
-        payload = {"repository": {"full_name": "owner/repo"}}
+        payload = command_payload()
         target = {"title": "Test issue", "body": "Question"}
 
         result = await router.route("如何部署", target, None, payload)
@@ -138,6 +276,7 @@ class TestSkillRouter:
     async def test_route_to_close(self, mocker):
         """Test route dispatches to CloseSkill."""
         mock_git = mocker.Mock()
+        mock_git.check_user_repo_access = mocker.AsyncMock(return_value=True)
         mock_git.close_issue = mocker.AsyncMock()
 
         mock_db = mocker.Mock()
@@ -145,7 +284,7 @@ class TestSkillRouter:
 
         router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
 
-        payload = {"repository": {"full_name": "owner/repo"}, "issue": {"number": 123}}
+        payload = command_payload()
         result = await router.route("close", {}, None, payload)
 
         assert result == ""
@@ -154,6 +293,7 @@ class TestSkillRouter:
     async def test_route_to_open(self, mocker):
         """Test route dispatches to OpenSkill."""
         mock_git = mocker.Mock()
+        mock_git.check_user_repo_access = mocker.AsyncMock(return_value=True)
         mock_git.open_issue = mocker.AsyncMock()
 
         mock_db = mocker.Mock()
@@ -161,7 +301,7 @@ class TestSkillRouter:
 
         router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
 
-        payload = {"repository": {"full_name": "owner/repo"}, "issue": {"number": 123}}
+        payload = command_payload()
         result = await router.route("open", {}, None, payload)
 
         assert result == ""
@@ -170,6 +310,7 @@ class TestSkillRouter:
     async def test_route_to_label(self, mocker):
         """Test route dispatches to LabelSkill."""
         mock_git = mocker.Mock()
+        mock_git.check_user_repo_access = mocker.AsyncMock(return_value=True)
         mock_git.add_issue_label = mocker.AsyncMock()
 
         mock_db = mocker.Mock()
@@ -177,7 +318,7 @@ class TestSkillRouter:
 
         router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
 
-        payload = {"repository": {"full_name": "owner/repo"}, "issue": {"number": 123}}
+        payload = command_payload()
         result = await router.route("label bug", {}, None, payload)
 
         assert result == ""
