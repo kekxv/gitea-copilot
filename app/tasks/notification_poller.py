@@ -211,28 +211,7 @@ async def handle_notification(note: dict, client: GiteaClient, account: GiteaAcc
 
         logger.info(f"Found {len(to_process)} new mentions to process in thread #{issue_number}")
 
-        # 5. Batch add 'eyes' reactions BEFORE processing any of them
-        # This prevents re-processing by next poll if AI takes long time
-        for task in to_process:
-            ref_id = f"acc{account.id}_{task['ref']}"
-            # Skip if already processed (db check)
-            existing = db.query(ProcessedEvent).filter(
-                ProcessedEvent.event_type == task["type"],
-                ProcessedEvent.reference_id == ref_id
-            ).first()
-            if existing:
-                continue
-            try:
-                if task.get("is_issue_body"):
-                    await client.add_issue_reaction(owner, repo_name, issue_number, "eyes")
-                    logger.info(f"Added eyes reaction to issue #{issue_number}")
-                elif task.get("comment_id"):
-                    await client.add_comment_reaction(owner, repo_name, task["comment_id"], "eyes")
-                    logger.info(f"Added eyes reaction to comment #{task['comment_id']}")
-            except Exception as e:
-                logger.warning(f"Failed to add eyes reaction: {e}")
-
-        # 6. Now process each mention (all have eyes reactions already)
+        # 5. Process each mention only after EventProcessor authorizes it.
         processor = EventProcessor(instance, account, db)
         for task in to_process:
             event_type = task["type"]
@@ -269,12 +248,32 @@ async def handle_notification(note: dict, client: GiteaClient, account: GiteaAcc
                 else:
                     payload["pull_request"] = task["item"]
 
-            try:
+            async def record_authorized_event_and_add_eyes():
+                """Retain authorized-event idempotency tracking after permission passes."""
                 event = ProcessedEvent(event_type=event_type, reference_id=ref_id)
                 db.add(event)
                 db.commit()
 
-                await processor.process(event_type, payload, db)
+                try:
+                    if task.get("is_issue_body"):
+                        await client.add_issue_reaction(owner, repo_name, issue_number, "eyes")
+                        logger.info(f"Added eyes reaction to issue #{issue_number}")
+                    elif task.get("comment_id"):
+                        await client.add_comment_reaction(owner, repo_name, task["comment_id"], "eyes")
+                        logger.info(f"Added eyes reaction to comment #{task['comment_id']}")
+                except Exception as e:
+                    logger.warning(f"Failed to add eyes reaction: {e}")
+
+            try:
+                processed = await processor.process(
+                    event_type,
+                    payload,
+                    db,
+                    on_authorized=record_authorized_event_and_add_eyes,
+                )
+                if not processed:
+                    logger.info("Skipped unauthorized or failed command event: %s", ref_id)
+                    continue
 
                 # Add hooray reaction to trigger comment/issue to indicate "processing completed"
                 try:

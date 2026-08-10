@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 import httpx
 from app.gitea.client import GiteaClient
@@ -535,8 +537,10 @@ class TestGiteaClientPermission:
         mocker.patch("httpx.AsyncClient.request", return_value=mock_response)
 
         client = GiteaClient(base_url="http://gitea.local", access_token="fake-token")
-        with caplog.at_level("ERROR", logger="uvicorn.error"):
+        with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
             result = await client.check_user_repo_access("owner", "repo", "user")
 
         assert result is False
         assert secret not in caplog.text
+        assert any(record.levelno == logging.WARNING for record in caplog.records)
+        assert any(record.levelno == logging.ERROR for record in caplog.records)

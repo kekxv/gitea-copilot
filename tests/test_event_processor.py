@@ -53,17 +53,11 @@ async def test_process_refreshes_router_for_each_event(mocker):
 
 
 @pytest.mark.asyncio
-async def test_multiple_denied_intents_post_one_denial(mocker):
-    from app.core.event_processor import EventProcessor
-    from app.skills.router import PERMISSION_DENIED_MESSAGE
-
+async def test_denied_command_returns_false_without_posting_a_comment(mocker):
     processor = EventProcessor.__new__(EventProcessor)
     processor.bot_username = "bot"
-    processor.router = mocker.Mock()
-    processor.router.route = mocker.AsyncMock(
-        return_value=PERMISSION_DENIED_MESSAGE
-    )
     processor.client = mocker.Mock()
+    processor.client.check_user_repo_access = mocker.AsyncMock(return_value=False)
     processor.client.create_comment = mocker.AsyncMock(return_value={})
     payload = {
         "comment": {"body": "@bot help @bot close"},
@@ -72,11 +66,42 @@ async def test_multiple_denied_intents_post_one_denial(mocker):
         "sender": {"login": "reader"},
     }
 
-    await processor._process_issue_comment(payload, mocker.Mock())
+    db = mocker.Mock()
+    db.query.return_value.first.return_value = None
+    result = await processor.process("issue_comment", payload, db)
 
-    processor.client.create_comment.assert_awaited_once_with(
-        "owner", "repo", 7, PERMISSION_DENIED_MESSAGE
-    )
+    assert result is False
+    processor.client.create_comment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_revalidates_each_event_but_reuses_one_lookup_per_event(mocker):
+    processor = EventProcessor.__new__(EventProcessor)
+    processor.bot_username = "bot"
+    processor.client = mocker.Mock()
+    processor.client.check_user_repo_access = mocker.AsyncMock(return_value=True)
+    processor.client.close_issue = mocker.AsyncMock()
+    processor.client.create_comment = mocker.AsyncMock(return_value={})
+    processor.client.add_comment_reaction = mocker.AsyncMock()
+    db = mocker.Mock()
+    db.query.return_value.first.return_value = None
+    payload = {
+        "comment": {"body": "@bot help @bot close"},
+        "issue": {"number": 7},
+        "repository": {"full_name": "owner/repo"},
+        "sender": {"login": "writer"},
+    }
+
+    first = await processor.process("issue_comment", payload, db)
+    second = await processor.process("issue_comment", payload, db)
+
+    assert first is True
+    assert second is True
+    processor.client.check_user_repo_access.assert_has_awaits([
+        mocker.call("owner", "repo", "writer"),
+        mocker.call("owner", "repo", "writer"),
+    ])
+    assert processor.client.check_user_repo_access.await_count == 2
 
 
 @pytest.mark.asyncio

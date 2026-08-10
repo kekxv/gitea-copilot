@@ -123,6 +123,27 @@ async def test_route_denies_when_identity_is_incomplete(mocker, payload):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"repository": ["not-a-repository"], "sender": {"login": "writer"}},
+        {"repository": {"full_name": "owner/repo"}, "sender": ["not-a-sender"]},
+    ],
+)
+async def test_route_denies_when_identity_payload_is_not_a_dictionary(mocker, payload):
+    mock_git = mocker.Mock()
+    mock_git.check_user_repo_access = mocker.AsyncMock(return_value=True)
+    mock_db = mocker.Mock()
+    mock_db.query.return_value.first.return_value = None
+
+    router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
+    result = await router.route("help", {}, None, payload)
+
+    assert result == PERMISSION_DENIED_MESSAGE
+    mock_git.check_user_repo_access.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_route_denies_when_permission_lookup_raises(mocker):
     mock_git = mocker.Mock()
     mock_git.check_user_repo_access = mocker.AsyncMock(
@@ -135,6 +156,24 @@ async def test_route_denies_when_permission_lookup_raises(mocker):
     result = await router.route("help", {}, None, command_payload())
 
     assert result == PERMISSION_DENIED_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_permission_lookup_exception_body_is_not_logged(mocker, caplog):
+    secret = "router-permission-error-secret"
+    mock_git = mocker.Mock()
+    mock_git.check_user_repo_access = mocker.AsyncMock(
+        side_effect=RuntimeError(secret)
+    )
+    mock_db = mocker.Mock()
+    mock_db.query.return_value.first.return_value = None
+    router = SkillRouter(db_session=mock_db, gitea_client=mock_git)
+
+    with caplog.at_level("WARNING", logger="uvicorn.error"):
+        result = await router.route("help", {}, None, command_payload())
+
+    assert result == PERMISSION_DENIED_MESSAGE
+    assert secret not in caplog.text
 
 
 @pytest.mark.asyncio

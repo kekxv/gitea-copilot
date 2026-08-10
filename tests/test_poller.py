@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime, timedelta
-from app.models import GiteaAccount, GiteaInstance, SystemConfig
+from app.models import GiteaAccount, GiteaInstance, ProcessedEvent, SystemConfig
 from app.tasks.notification_poller import process_account_notifications
 from app.gitea.client import GiteaClient
 
@@ -78,6 +78,14 @@ async def test_handle_notification_logic(db_session, mocker):
 
     mock_processor = mocker.patch("app.tasks.notification_poller.EventProcessor", autospec=True)
 
+    async def process_after_authorization(*args, **kwargs):
+        await kwargs["on_authorized"]()
+        return True
+
+    mock_processor.return_value.process = mocker.AsyncMock(
+        side_effect=process_after_authorization
+    )
+
     from app.tasks.notification_poller import handle_notification
     await handle_notification(note, mock_client, account, instance, db_session)
 
@@ -98,3 +106,44 @@ async def test_handle_notification_logic(db_session, mocker):
     assert calls[0] == mocker.call("o", "r", 2, "eyes")
     # Second call is hooray (after processing completed)
     assert calls[1] == mocker.call("o", "r", 2, "hooray")
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_mention_does_not_add_reactions_or_record_processing(
+    db_session, mocker
+):
+    instance = GiteaInstance(
+        url="http://gitea.local", client_id="cid", client_secret_encrypted="csec"
+    )
+    db_session.add(instance)
+    account = GiteaAccount(
+        instance_id=1, gitea_user_id="1", gitea_username="bot", access_token="t"
+    )
+    db_session.add(account)
+    db_session.commit()
+    mock_client = mocker.Mock(spec=GiteaClient)
+    note = {
+        "id": 101,
+        "subject": {"type": "Issue", "url": "http://gitea.local/api/v1/repos/o/r/issues/1"},
+        "repository": {"full_name": "o/r"},
+    }
+    mock_client.get_issue_comments = mocker.AsyncMock(return_value=[
+        {"id": 2, "user": {"login": "reader"}, "created_at": "2026-04-20T10:00:00Z", "body": "@bot close"}
+    ])
+    mock_client.get_issue = mocker.AsyncMock(return_value={
+        "id": 1, "number": 1, "body": "desc", "created_at": "2026-04-20T08:00:00Z", "user": {}
+    })
+    mock_client.mark_notification_as_read = mocker.AsyncMock(return_value=True)
+    mock_client.has_bot_reaction = mocker.AsyncMock(return_value=False)
+    mock_client.add_comment_reaction = mocker.AsyncMock(return_value={})
+    mock_client.add_issue_reaction = mocker.AsyncMock(return_value={})
+    mock_processor = mocker.patch("app.tasks.notification_poller.EventProcessor", autospec=True)
+    mock_processor.return_value.process = mocker.AsyncMock(return_value=False)
+
+    from app.tasks.notification_poller import handle_notification
+    await handle_notification(note, mock_client, account, instance, db_session)
+
+    mock_processor.return_value.process.assert_awaited_once()
+    mock_client.add_comment_reaction.assert_not_awaited()
+    mock_client.add_issue_reaction.assert_not_awaited()
+    assert db_session.query(ProcessedEvent).count() == 0

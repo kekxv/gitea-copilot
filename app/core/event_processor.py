@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Awaitable, Callable
 from sqlalchemy.orm import Session
 from ..models import GiteaInstance, GiteaAccount
 from ..gitea import GiteaClient
@@ -23,11 +24,24 @@ class EventProcessor:
         # Use the account's Gitea username as the bot username
         self.bot_username = account.gitea_username
 
-    async def process(self, event_type: str, payload: Dict[Any, Any], db: Session):
-        """Process the webhook event."""
+    async def process(
+        self,
+        event_type: str,
+        payload: Dict[Any, Any],
+        db: Session,
+        on_authorized: Callable[[], Awaitable[None]] | None = None,
+    ) -> bool:
+        """Process a command event and report whether its sender was authorized."""
         logger.info(f"Processor.process called: event_type={event_type}")
         try:
             self.router = SkillRouter(db_session=db, gitea_client=self.client)
+            if not await self.router.has_write_access(payload):
+                logger.warning("Command event denied before processing")
+                return False
+
+            if on_authorized:
+                await on_authorized()
+
             if event_type == "issue_comment":
                 logger.info("Processing as issue_comment event")
                 await self._process_issue_comment(payload, db)
@@ -42,6 +56,9 @@ class EventProcessor:
 
         except Exception as e:
             logger.error(f"Processing error: {e}", exc_info=True)
+            return False
+
+        return True
 
     async def _process_issue_comment(self, payload: Dict, db: Session):
         """Process issue comment event."""

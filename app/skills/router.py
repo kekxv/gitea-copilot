@@ -84,11 +84,21 @@ class SkillRouter:
         # Default to analyze for questions/requests
         return "analyze"
 
-    async def _has_write_access(self, payload: Dict[Any, Any]) -> bool:
+    def _command_identity(self, payload: Dict[Any, Any]) -> tuple[str, str]:
+        """Return repository and sender identities only when both are mappings."""
+        if not isinstance(payload, dict):
+            return "", ""
+
         repository = payload.get("repository") or {}
         sender = payload.get("sender") or {}
-        full_name = repository.get("full_name") or ""
-        username = sender.get("login") or ""
+        if not isinstance(repository, dict) or not isinstance(sender, dict):
+            return "", ""
+
+        return repository.get("full_name") or "", sender.get("login") or ""
+
+    async def has_write_access(self, payload: Dict[Any, Any]) -> bool:
+        """Fail closed unless the command sender has repository write access."""
+        full_name, username = self._command_identity(payload)
 
         if not username or "/" not in full_name:
             logger.warning(
@@ -118,12 +128,15 @@ class SkillRouter:
                 username,
                 owner,
                 repo,
-                exc_info=True,
             )
             allowed = False
 
         self._permission_cache[cache_key] = allowed
         return allowed
+
+    async def _has_write_access(self, payload: Dict[Any, Any]) -> bool:
+        """Backward-compatible alias for the permission check helper."""
+        return await self.has_write_access(payload)
 
     async def route(
         self,
@@ -138,14 +151,13 @@ class SkillRouter:
         skill_name = self.classify_intent(intent)
         logger.info(f"Classified as skill: {skill_name}")
 
-        if not await self._has_write_access(payload):
-            repository = payload.get("repository") or {}
-            sender = payload.get("sender") or {}
+        if not await self.has_write_access(payload):
+            repository, sender = self._command_identity(payload)
             logger.warning(
                 "Denied skill=%s sender=%s repository=%s",
                 skill_name,
-                sender.get("login") or "unknown",
-                repository.get("full_name") or "unknown",
+                sender or "unknown",
+                repository or "unknown",
             )
             return PERMISSION_DENIED_MESSAGE
 
