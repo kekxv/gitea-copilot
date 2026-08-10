@@ -8,6 +8,55 @@ from app.skills.router import PERMISSION_DENIED_MESSAGE
 
 
 @pytest.mark.asyncio
+async def test_route_to_skill_reuses_processor_router(mocker):
+    from app.core.event_processor import EventProcessor
+
+    processor = EventProcessor.__new__(EventProcessor)
+    processor.router = mocker.Mock()
+    processor.router.route = mocker.AsyncMock(return_value="done")
+    payload = {
+        "repository": {"full_name": "owner/repo"},
+        "sender": {"login": "writer"},
+    }
+    target = {"number": 1}
+    db = mocker.Mock()
+
+    first = await processor._route_to_skill("help", target, None, payload, db)
+    second = await processor._route_to_skill("close", target, None, payload, db)
+
+    assert first == "done"
+    assert second == "done"
+    assert processor.router.route.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_multiple_denied_intents_post_one_denial(mocker):
+    from app.core.event_processor import EventProcessor
+    from app.skills.router import PERMISSION_DENIED_MESSAGE
+
+    processor = EventProcessor.__new__(EventProcessor)
+    processor.bot_username = "bot"
+    processor.router = mocker.Mock()
+    processor.router.route = mocker.AsyncMock(
+        return_value=PERMISSION_DENIED_MESSAGE
+    )
+    processor.client = mocker.Mock()
+    processor.client.create_comment = mocker.AsyncMock(return_value={})
+    payload = {
+        "comment": {"body": "@bot help @bot close"},
+        "issue": {"number": 7},
+        "repository": {"full_name": "owner/repo"},
+        "sender": {"login": "reader"},
+    }
+
+    await processor._process_issue_comment(payload, mocker.Mock())
+
+    processor.client.create_comment.assert_awaited_once_with(
+        "owner", "repo", 7, PERMISSION_DENIED_MESSAGE
+    )
+
+
+@pytest.mark.asyncio
 async def test_denied_comment_command_does_not_log_secret_bearing_intent(caplog):
     secret = "caller-intent-secret"
     processor = EventProcessor.__new__(EventProcessor)

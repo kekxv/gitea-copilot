@@ -20,6 +20,7 @@ class EventProcessor:
             account_id=account.id, 
             db_session=db
         )
+        self.router = SkillRouter(db_session=db, gitea_client=self.client)
         # Use the account's Gitea username as the bot username
         self.bot_username = account.gitea_username
 
@@ -89,7 +90,7 @@ class EventProcessor:
         for intent in intents:
             response = await self._route_to_skill(intent, issue, comment, payload, db)
             logger.info("Command routing completed; response_present=%s", bool(response))
-            if response and response.strip():
+            if response and response.strip() and response not in responses:
                 responses.append(response)
 
         # Combine all non-empty responses into one comment
@@ -197,7 +198,7 @@ class EventProcessor:
         responses = []
         for i in intent:
             response = await self._route_to_skill(i, issue, None, payload, db)
-            if response and response.strip():
+            if response and response.strip() and response not in responses:
                 responses.append(response)
 
         if responses:
@@ -236,7 +237,7 @@ class EventProcessor:
         responses = []
         for i in intent:
             response = await self._route_to_skill(i, pr, None, payload, db)
-            if response and response.strip():
+            if response and response.strip() and response not in responses:
                 responses.append(response)
 
         if responses:
@@ -329,9 +330,7 @@ class EventProcessor:
         logger.info("Routing command to skill router")
 
         try:
-            # Pass Gitea client to skill router for operations like labeling
-            router = SkillRouter(db_session=db, gitea_client=self.client)
-            return await router.route(intent, target, comment, payload)
+            return await self.router.route(intent, target, comment, payload)
         except Exception as e:
             logger.error(f"Skill routing error: {e}", exc_info=True)
             return "抱歉，处理您的请求时出现错误。请稍后重试。"
